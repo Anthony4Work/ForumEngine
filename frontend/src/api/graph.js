@@ -68,3 +68,45 @@ export function getProject(projectId) {
     method: 'get'
   })
 }
+
+// ============== Graph Library API ==============
+
+export function getGraphLibrary(limit = 50) {
+  return service({
+    url: '/api/graph/library',
+    method: 'get',
+    params: { limit }
+  })
+}
+
+export function getGraphDetail(graphId) {
+  return service({
+    url: `/api/graph/library/${graphId}`,
+    method: 'get'
+  })
+}
+
+export function updateGraphMeta(graphId, data) {
+  return service({
+    url: `/api/graph/library/${graphId}`,
+    method: 'patch',
+    data
+  })
+}
+
+export function deleteGraph(graphId) {
+  return service({
+    url: `/api/graph/library/${graphId}`,
+    method: 'delete'
+  })
+}
+
+export function startDeliberation(graphId, data) {
+  return requestWithRetry(() =>
+    service({
+      url: `/api/graph/library/${graphId}/deliberate`,
+      method: 'post',
+      data
+    })
+  )
+}

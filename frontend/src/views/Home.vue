@@ -7,183 +7,191 @@
         FORUMENGINE
       </div>
       <div class="nav-links">
-        <span class="nav-status-text">Internal Tool</span>
+        <span class="nav-link-item" @click="$router.push('/library')">Library</span>
+        <span class="nav-status-text">v0.1</span>
       </div>
     </nav>
 
     <div class="main-content">
-      <!-- Hero Section -->
-      <section class="hero-section">
-        <div class="hero-full">
-          <div class="tag-row">
-            <span class="orange-tag">Mission Simulation Platform</span>
-            <span class="version-text">/ v0.1</span>
+      <!-- Section 1: Dashboard Top — Two Columns -->
+      <section class="dashboard-top">
+        <!-- Left: New Mission Panel -->
+        <div class="panel-create">
+          <div class="panel-title-row">
+            <span class="status-dot">■</span>
+            <span class="panel-title">New Mission</span>
           </div>
 
-          <h1 class="main-title">
-            Define the Mission<br>
-            <span class="gradient-text">Simulate Every Outcome</span>
-          </h1>
+          <!-- 01 / Mission Briefing -->
+          <div class="create-section">
+            <div class="section-header">
+              <span class="section-label">01 / Mission Briefing</span>
+              <span class="section-meta">PDF, MD, TXT</span>
+            </div>
 
-          <div class="hero-desc">
-            <p>
-              Feed any briefing document into <span class="highlight-bold">ForumEngine</span> and it will automatically spin up a multi-agent simulation environment. Explore how <span class="highlight-orange">stakeholders react</span>, identify emerging patterns, and stress-test decisions before committing to them in the real world.
-            </p>
-            <p class="slogan-text">
-              Run the scenario before it runs you<span class="blinking-cursor">_</span>
-            </p>
+            <div
+              class="upload-zone"
+              :class="{ 'drag-over': isDragOver, 'has-files': files.length > 0 }"
+              @dragover.prevent="handleDragOver"
+              @dragleave.prevent="handleDragLeave"
+              @drop.prevent="handleDrop"
+              @click="triggerFileInput"
+            >
+              <input
+                ref="fileInput"
+                type="file"
+                multiple
+                accept=".pdf,.md,.txt"
+                @change="handleFileSelect"
+                style="display: none"
+                :disabled="loading"
+              />
+
+              <div v-if="files.length === 0" class="upload-placeholder">
+                <div class="upload-icon">↑</div>
+                <div class="upload-title">Drag & drop files here</div>
+                <div class="upload-hint">or click to browse</div>
+              </div>
+
+              <div v-else class="file-list">
+                <div v-for="(file, index) in files" :key="index" class="file-item">
+                  <span class="file-icon">📄</span>
+                  <span class="file-name">{{ file.name }}</span>
+                  <button @click.stop="removeFile(index)" class="remove-btn">×</button>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <button class="scroll-down-btn" @click="scrollToBottom">
-            ↓
+          <!-- Divider -->
+          <div class="create-divider"><span>Parameters</span></div>
+
+          <!-- 02 / Mission Objective -->
+          <div class="create-section">
+            <div class="section-header">
+              <span class="section-label">>_ 02 / Mission Objective <span class="optional-tag">(optional)</span></span>
+            </div>
+            <div class="field-wrapper">
+              <textarea
+                v-model="formData.simulationRequirement"
+                class="code-input"
+                placeholder="// Optional: Describe the mission objective now, or leave empty to build a reusable knowledge graph and query it later from the Library."
+                rows="4"
+                :disabled="loading"
+              ></textarea>
+            </div>
+          </div>
+
+          <!-- 03 / Domain Hints -->
+          <div class="create-section">
+            <div class="section-header">
+              <span class="section-label">>_ 03 / Domain Hints <span class="optional-tag">(optional)</span></span>
+            </div>
+            <input
+              v-model="formData.domainHints"
+              class="domain-input"
+              placeholder="e.g. military logistics, terrain analysis, force disposition..."
+              :disabled="loading"
+            />
+          </div>
+
+          <!-- Launch Button -->
+          <button
+            class="launch-btn"
+            @click="startSimulation"
+            :disabled="!canSubmit || loading"
+          >
+            <span v-if="!loading">Launch Engine</span>
+            <span v-else>Initializing...</span>
+            <span class="btn-arrow">→</span>
           </button>
         </div>
-      </section>
 
-      <!-- Dashboard: Two-Column Layout -->
-      <section class="dashboard-section">
-        <!-- Left Column: Status & Steps -->
-        <div class="left-panel">
-          <div class="panel-header">
-            <span class="status-dot">■</span> System Status
+        <!-- Right: Graph Library Panel -->
+        <div class="panel-library">
+          <div class="panel-title-row">
+            <div class="library-title-left">
+              <span class="diamond-icon">◈</span>
+              <span class="panel-title">Knowledge Graphs</span>
+              <span class="lib-count" v-if="libraryGraphs.length">{{ libraryGraphs.length }}</span>
+            </div>
+            <button class="view-all-btn" @click="$router.push('/library')">All →</button>
           </div>
 
-          <h2 class="section-title">Ready</h2>
-          <p class="section-desc">
-            Simulation engine on standby. Upload mission documents to initialize a new scenario.
+          <!-- Library Cards (scrollable) -->
+          <div class="library-scroll" v-if="libraryGraphs.length > 0">
+            <div
+              v-for="(graph, i) in libraryGraphs"
+              :key="graph.graph_id"
+              class="lib-card"
+              :style="{ animationDelay: (i * 0.05) + 's' }"
+              @click="$router.push(`/library/${graph.graph_id}/query`)"
+            >
+              <div class="lib-card-top">
+                <span class="lib-card-name">{{ graph.name }}</span>
+                <span class="lib-card-stats">{{ graph.node_count }}n / {{ graph.edge_count }}e</span>
+              </div>
+              <div class="lib-card-desc">{{ truncateText(graph.description, 90) }}</div>
+              <div class="lib-card-meta">
+                <span>{{ graph.documents.length }} docs</span>
+                <span>·</span>
+                <span>{{ graph.deliberation_count }} queries</span>
+                <span v-if="graph.entity_types_list && graph.entity_types_list.length" class="lib-card-types">
+                  · {{ graph.entity_types_list.slice(0, 3).join(', ') }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Empty State -->
+          <div class="library-empty" v-else>
+            <span class="empty-diamond">◇</span>
+            <p class="empty-title">No graphs yet</p>
+            <p class="empty-hint">Upload documents on the left to create your first knowledge graph.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 2: Tagline Bar -->
+      <div class="tagline-bar">
+        <span class="tagline-text">Run the scenario before it runs you<span class="blinking-cursor">_</span></span>
+      </div>
+
+      <!-- Section 3: Explanation -->
+      <section class="explain-section">
+        <div class="explain-left">
+          <div class="tag-row">
+            <span class="orange-tag">Mission Simulation Platform</span>
+          </div>
+          <h2 class="explain-title">
+            Define the Mission.<br>
+            Simulate Every Outcome.
+          </h2>
+          <p class="explain-desc">
+            Feed any briefing document into <span class="highlight-bold">ForumEngine</span> and it will automatically spin up a multi-agent simulation environment. Explore how <span class="highlight-orange">stakeholders react</span>, identify emerging patterns, and stress-test decisions before committing to them in the real world.
           </p>
-
-          <!-- Workflow Steps -->
-          <div class="steps-container">
-            <div class="steps-header">
-               <span class="diamond-icon">◇</span> Mission Workflow
-            </div>
-            <div class="workflow-list">
-              <div class="workflow-item">
-                <span class="step-num">01</span>
-                <div class="step-info">
-                  <div class="step-title">Graph Building</div>
-                  <div class="step-desc">Extract entities, relationships and context from source documents into a knowledge graph</div>
-                </div>
-              </div>
-              <div class="workflow-item">
-                <span class="step-num">02</span>
-                <div class="step-info">
-                  <div class="step-title">Environment Setup</div>
-                  <div class="step-desc">Generate agent profiles, assign roles and inject simulation parameters</div>
-                </div>
-              </div>
-              <div class="workflow-item">
-                <span class="step-num">03</span>
-                <div class="step-info">
-                  <div class="step-title">Run Simulation</div>
-                  <div class="step-desc">Execute multi-agent deliberation across parallel channels with dynamic memory</div>
-                </div>
-              </div>
-              <div class="workflow-item">
-                <span class="step-num">04</span>
-                <div class="step-info">
-                  <div class="step-title">Report Generation</div>
-                  <div class="step-desc">ReportAgent analyzes simulation outcomes using graph-powered tools</div>
-                </div>
-              </div>
-              <div class="workflow-item">
-                <span class="step-num">05</span>
-                <div class="step-info">
-                  <div class="step-title">Deep Interaction</div>
-                  <div class="step-desc">Debrief any agent or query the ReportAgent for targeted analysis</div>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
 
-        <!-- Right Column: Interactive Console -->
-        <div class="right-panel">
-          <div class="console-box">
-            <!-- Upload Area -->
-            <div class="console-section">
-              <div class="console-header">
-                <span class="console-label">01 / Mission Briefing</span>
-                <span class="console-meta">Formats: PDF, MD, TXT</span>
+        <div class="explain-right">
+          <div class="workflow-header">
+            <span class="diamond-icon">◇</span> Mission Workflow
+          </div>
+          <div class="workflow-list">
+            <div class="workflow-item" v-for="step in workflowSteps" :key="step.num">
+              <span class="step-num">{{ step.num }}</span>
+              <div class="step-info">
+                <div class="step-title">{{ step.title }}</div>
+                <div class="step-desc">{{ step.desc }}</div>
               </div>
-              
-              <div 
-                class="upload-zone"
-                :class="{ 'drag-over': isDragOver, 'has-files': files.length > 0 }"
-                @dragover.prevent="handleDragOver"
-                @dragleave.prevent="handleDragLeave"
-                @drop.prevent="handleDrop"
-                @click="triggerFileInput"
-              >
-                <input
-                  ref="fileInput"
-                  type="file"
-                  multiple
-                  accept=".pdf,.md,.txt"
-                  @change="handleFileSelect"
-                  style="display: none"
-                  :disabled="loading"
-                />
-                
-                <div v-if="files.length === 0" class="upload-placeholder">
-                  <div class="upload-icon">↑</div>
-                  <div class="upload-title">Drag & drop files here</div>
-                  <div class="upload-hint">or click to browse</div>
-                </div>
-                
-                <div v-else class="file-list">
-                  <div v-for="(file, index) in files" :key="index" class="file-item">
-                    <span class="file-icon">📄</span>
-                    <span class="file-name">{{ file.name }}</span>
-                    <button @click.stop="removeFile(index)" class="remove-btn">×</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Divider -->
-            <div class="console-divider">
-              <span>Parameters</span>
-            </div>
-
-            <!-- Input Area -->
-            <div class="console-section">
-              <div class="console-header">
-                <span class="console-label">>_ 02 / Mission Objective</span>
-              </div>
-              <div class="input-wrapper">
-                <textarea
-                  v-model="formData.simulationRequirement"
-                  class="code-input"
-                  placeholder="// Describe the scenario you want to simulate (e.g. What happens if we announce policy X? How will stakeholders react to decision Y?)"
-                  rows="6"
-                  :disabled="loading"
-                ></textarea>
-                <div class="model-badge">Engine: ForumEngine-V1.0</div>
-              </div>
-            </div>
-
-            <!-- Start Button -->
-            <div class="console-section btn-section">
-              <button
-                class="start-engine-btn"
-                @click="startSimulation"
-                :disabled="!canSubmit || loading"
-              >
-                <span v-if="!loading">Launch Engine</span>
-                <span v-else>Initializing...</span>
-                <span class="btn-arrow">→</span>
-              </button>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- History Database -->
+      <!-- Section 4: History Database -->
       <HistoryDatabase />
 
-      <!-- Footer -->
+      <!-- Section 5: Footer -->
       <footer class="powered-footer">
         <img src="/indramind.svg" alt="IndraMind" class="footer-logo" />
         <span>Powered by IndraMind</span>
@@ -193,66 +201,85 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import HistoryDatabase from '../components/HistoryDatabase.vue'
+import { getGraphLibrary } from '../api/graph.js'
 
 const router = useRouter()
 
 // Form data
 const formData = ref({
-  simulationRequirement: ''
+  simulationRequirement: '',
+  domainHints: ''
 })
 
 // File list
 const files = ref([])
 
+// Graph Library
+const libraryGraphs = ref([])
+
 // State
 const loading = ref(false)
-const error = ref('')
 const isDragOver = ref(false)
 
 // File input ref
 const fileInput = ref(null)
 
-// Computed: can submit
-const canSubmit = computed(() => {
-  return formData.value.simulationRequirement.trim() !== '' && files.value.length > 0
+// Workflow steps data
+const workflowSteps = [
+  { num: '01', title: 'Graph Building', desc: 'Extract entities, relationships and context from source documents into a knowledge graph' },
+  { num: '02', title: 'Environment Setup', desc: 'Generate agent profiles, assign roles and inject simulation parameters' },
+  { num: '03', title: 'Run Simulation', desc: 'Execute multi-agent deliberation across parallel channels with dynamic memory' },
+  { num: '04', title: 'Report Generation', desc: 'ReportAgent analyzes simulation outcomes using graph-powered tools' },
+  { num: '05', title: 'Deep Interaction', desc: 'Debrief any agent or query the ReportAgent for targeted analysis' }
+]
+
+// Load library graphs on mount
+onMounted(async () => {
+  try {
+    const res = await getGraphLibrary(10)
+    if (res.data?.success) {
+      libraryGraphs.value = res.data.data || []
+    }
+  } catch (e) {
+    // Silent fail — library preview is optional
+  }
 })
 
-// Trigger file selection
+// Computed: can submit (files required)
+const canSubmit = computed(() => files.value.length > 0)
+
+// Truncate text helper
+const truncateText = (text, max) => {
+  if (!text) return ''
+  return text.length > max ? text.substring(0, max) + '...' : text
+}
+
+// File handling
 const triggerFileInput = () => {
-  if (!loading.value) {
-    fileInput.value?.click()
-  }
+  if (!loading.value) fileInput.value?.click()
 }
 
-// Handle file selection
 const handleFileSelect = (event) => {
-  const selectedFiles = Array.from(event.target.files)
-  addFiles(selectedFiles)
+  addFiles(Array.from(event.target.files))
 }
 
-// Handle drag events
-const handleDragOver = (e) => {
-  if (!loading.value) {
-    isDragOver.value = true
-  }
+const handleDragOver = () => {
+  if (!loading.value) isDragOver.value = true
 }
 
-const handleDragLeave = (e) => {
+const handleDragLeave = () => {
   isDragOver.value = false
 }
 
 const handleDrop = (e) => {
   isDragOver.value = false
   if (loading.value) return
-  
-  const droppedFiles = Array.from(e.dataTransfer.files)
-  addFiles(droppedFiles)
+  addFiles(Array.from(e.dataTransfer.files))
 }
 
-// Add files
 const addFiles = (newFiles) => {
   const validFiles = newFiles.filter(file => {
     const ext = file.name.split('.').pop().toLowerCase()
@@ -261,38 +288,26 @@ const addFiles = (newFiles) => {
   files.value.push(...validFiles)
 }
 
-// Remove file
 const removeFile = (index) => {
   files.value.splice(index, 1)
 }
 
-// Scroll to bottom
-const scrollToBottom = () => {
-  window.scrollTo({
-    top: document.body.scrollHeight,
-    behavior: 'smooth'
-  })
-}
-
-// Start simulation - navigate immediately, API calls happen in Process page
+// Start simulation
 const startSimulation = () => {
   if (!canSubmit.value || loading.value) return
-  
-  // Store pending upload data
+
   import('../store/pendingUpload.js').then(({ setPendingUpload }) => {
-    setPendingUpload(files.value, formData.value.simulationRequirement)
-    
-    // Navigate to Process page immediately (use special ID for new project)
-    router.push({
-      name: 'Process',
-      params: { projectId: 'new' }
-    })
+    setPendingUpload(
+      files.value,
+      formData.value.simulationRequirement,
+      formData.value.domainHints
+    )
+    router.push({ name: 'Process', params: { projectId: 'new' } })
   })
 }
 </script>
 
 <style scoped>
-/* Global variables & reset */
 :root {
   --black: #000000;
   --white: #FFFFFF;
@@ -300,10 +315,8 @@ const startSimulation = () => {
   --gray-light: #F5F5F5;
   --gray-text: #666666;
   --border: #E5E5E5;
-  /* Space Grotesk for headings, JetBrains Mono for code/labels */
   --font-mono: 'JetBrains Mono', monospace;
   --font-sans: 'Space Grotesk', system-ui, sans-serif;
-  --font-cn: system-ui, sans-serif; /* kept for legacy references */
 }
 
 .home-container {
@@ -313,7 +326,7 @@ const startSimulation = () => {
   color: var(--black);
 }
 
-/* Top Navigation */
+/* ─── Navbar ─── */
 .navbar {
   height: 60px;
   background: var(--black);
@@ -334,124 +347,430 @@ const startSimulation = () => {
   font-size: 1.2rem;
 }
 
-.nav-logo {
-  height: 28px;
-  width: auto;
-}
+.nav-logo { height: 28px; width: auto; }
 
 .nav-links {
   display: flex;
   align-items: center;
 }
 
+.nav-link-item {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: #999;
+  cursor: pointer;
+  transition: color 0.15s;
+  letter-spacing: 0.5px;
+  margin-right: 24px;
+}
+
+.nav-link-item:hover { color: var(--white); }
+
 .nav-status-text {
   font-family: var(--font-mono);
   font-size: 0.75rem;
   color: #666;
   letter-spacing: 1px;
-  text-transform: uppercase;
 }
 
-/* Main Content */
+/* ─── Main Content ─── */
 .main-content {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 60px 40px;
+  padding: 40px 40px 0;
 }
 
-/* Hero Section */
-.hero-section {
-  margin-bottom: 80px;
-  position: relative;
+/* ─── Section 1: Dashboard Top ─── */
+.dashboard-top {
+  display: flex;
+  gap: 40px;
+  align-items: stretch;
 }
 
-.hero-full {
-  max-width: 800px;
+.panel-create {
+  flex: 5;
+  border: 1px solid var(--border);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
 }
 
-.tag-row {
+.panel-library {
+  flex: 7;
+  border: 1px solid var(--border);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-title-row {
   display: flex;
   align-items: center;
-  gap: 15px;
-  margin-bottom: 25px;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.library-title-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-title { font-weight: 700; letter-spacing: 0.5px; }
+
+.status-dot {
+  color: var(--orange);
+  font-size: 0.85rem;
+  margin-right: 10px;
+}
+
+.diamond-icon { font-size: 1.1rem; line-height: 1; }
+
+.lib-count {
+  background: #F0F0F0;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  color: var(--gray-text);
+}
+
+.view-all-btn {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 5px 14px;
+  cursor: pointer;
+  color: var(--gray-text);
+  transition: all 0.15s;
+  letter-spacing: 0.3px;
+}
+
+.view-all-btn:hover {
+  border-color: var(--black);
+  color: var(--black);
+}
+
+/* ─── Create Panel Sections ─── */
+.create-section { margin-bottom: 16px; }
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: #666;
+}
+
+.section-label { letter-spacing: 0.3px; }
+
+.section-meta { color: #AAA; }
+
+.optional-tag {
+  color: #AAA;
+  font-weight: 400;
+  font-size: 0.62rem;
+}
+
+/* Upload Zone */
+.upload-zone {
+  border: 1px dashed #CCC;
+  min-height: 140px;
+  overflow-y: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s;
+  background: #FAFAFA;
+}
+
+.upload-zone.has-files { align-items: flex-start; }
+.upload-zone:hover { background: #F0F0F0; border-color: #999; }
+.upload-zone.drag-over { border-color: var(--orange); background: #FFF8F5; }
+
+.upload-placeholder { text-align: center; }
+
+.upload-icon {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #DDD;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 12px;
+  color: #999;
+  font-size: 1rem;
+}
+
+.upload-title { font-weight: 500; font-size: 0.85rem; margin-bottom: 4px; }
+
+.upload-hint {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: #999;
+}
+
+.file-list {
+  width: 100%;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  background: var(--white);
+  padding: 7px 10px;
+  border: 1px solid #EEE;
   font-family: var(--font-mono);
   font-size: 0.8rem;
 }
 
-.orange-tag {
-  background: var(--orange);
-  color: var(--white);
-  padding: 4px 10px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  font-size: 0.75rem;
-}
+.file-name { flex: 1; margin: 0 8px; }
 
-.version-text {
+.remove-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.1rem;
   color: #999;
-  font-weight: 500;
-  letter-spacing: 0.5px;
 }
 
-.main-title {
-  font-size: 4.5rem;
-  line-height: 1.2;
-  font-weight: 500;
-  margin: 0 0 40px 0;
-  letter-spacing: -2px;
-  color: var(--black);
+.remove-btn:hover { color: var(--orange); }
+
+/* Create Divider */
+.create-divider {
+  display: flex;
+  align-items: center;
+  margin: 12px 0;
 }
 
-.gradient-text {
-  background: linear-gradient(90deg, #000000 0%, #444444 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  display: inline-block;
+.create-divider::before,
+.create-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #EEE;
 }
 
-.hero-desc {
-  font-size: 1.05rem;
-  line-height: 1.8;
-  color: var(--gray-text);
-  max-width: 640px;
-  margin-bottom: 50px;
-  font-weight: 400;
-  text-align: justify;
-}
-
-.hero-desc p {
-  margin-bottom: 1.5rem;
-}
-
-.highlight-bold {
-  color: var(--black);
-  font-weight: 700;
-}
-
-.highlight-orange {
-  color: var(--orange);
-  font-weight: 700;
+.create-divider span {
+  padding: 0 14px;
   font-family: var(--font-mono);
-}
-
-.highlight-code {
-  background: rgba(0, 0, 0, 0.05);
-  padding: 2px 6px;
-  border-radius: 2px;
-  font-family: var(--font-mono);
-  font-size: 0.9em;
-  color: var(--black);
-  font-weight: 600;
-}
-
-.slogan-text {
-  font-size: 1.2rem;
-  font-weight: 520;
-  color: var(--black);
+  font-size: 0.68rem;
+  color: #BBB;
   letter-spacing: 1px;
-  border-left: 3px solid var(--orange);
-  padding-left: 15px;
-  margin-top: 20px;
+}
+
+/* Field Wrapper */
+.field-wrapper {
+  border: 1px solid #DDD;
+  background: #FAFAFA;
+}
+
+.code-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+  min-height: 80px;
+}
+
+/* Domain Hints Input */
+.domain-input {
+  width: 100%;
+  border: 1px solid #DDD;
+  background: #FAFAFA;
+  padding: 12px 16px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.domain-input:focus { border-color: var(--orange); }
+
+/* Launch Button */
+.launch-btn {
+  width: 100%;
+  margin-top: auto;
+  padding-top: 16px;
+  background: var(--black);
+  color: var(--white);
+  border: none;
+  padding: 18px 20px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  letter-spacing: 1px;
+}
+
+.launch-btn:not(:disabled) {
+  animation: pulse-border 2s infinite;
+}
+
+.launch-btn:not(:disabled):hover {
+  background: var(--orange);
+}
+
+.launch-btn:disabled {
+  background: #E5E5E5;
+  color: #999;
+  cursor: not-allowed;
+}
+
+.btn-arrow { font-weight: 400; }
+
+@keyframes pulse-border {
+  0% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.2); }
+  70% { box-shadow: 0 0 0 6px rgba(0, 0, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+}
+
+/* ─── Library Panel ─── */
+.library-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 520px;
+}
+
+.library-scroll::-webkit-scrollbar { width: 4px; }
+.library-scroll::-webkit-scrollbar-track { background: transparent; }
+.library-scroll::-webkit-scrollbar-thumb { background: #CCC; }
+
+.lib-card {
+  padding: 16px 18px;
+  border: 1px solid #EEE;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+  opacity: 0;
+  transform: translateY(8px);
+  animation: cardFadeIn 0.3s ease forwards;
+}
+
+.lib-card:hover {
+  border-color: var(--orange);
+  background: #FFFAF8;
+}
+
+.lib-card::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background: var(--orange);
+  transition: width 0.3s;
+}
+
+.lib-card:hover::after { width: 100%; }
+
+@keyframes cardFadeIn {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.lib-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.lib-card-name {
+  font-weight: 520;
+  font-size: 0.9rem;
+}
+
+.lib-card-stats {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: #AAA;
+}
+
+.lib-card-desc {
+  font-size: 0.8rem;
+  color: var(--gray-text);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.lib-card-meta {
+  display: flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: #AAA;
+}
+
+.lib-card-types { color: #BBB; }
+
+/* Library Empty State */
+.library-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--gray-text);
+}
+
+.empty-diamond {
+  font-size: 2rem;
+  color: #DDD;
+  margin-bottom: 16px;
+}
+
+.empty-title {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin: 0 0 8px;
+  color: #999;
+}
+
+.empty-hint {
+  font-size: 0.82rem;
+  color: #BBB;
+  max-width: 240px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* ─── Section 2: Tagline Bar ─── */
+.tagline-bar {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 32px 0;
+  margin: 50px 0;
+  text-align: center;
+}
+
+.tagline-text {
+  font-size: 1.3rem;
+  font-weight: 520;
+  letter-spacing: 0.5px;
+  color: var(--black);
 }
 
 .blinking-cursor {
@@ -465,98 +784,65 @@ const startSimulation = () => {
   50% { opacity: 0; }
 }
 
-.decoration-square {
-  width: 16px;
-  height: 16px;
-  background: var(--orange);
-}
-
-.scroll-down-btn {
-  margin-top: 30px;
-  width: 40px;
-  height: 40px;
-  border: 1px solid var(--border);
-  background: transparent;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  color: var(--orange);
-  font-size: 1.2rem;
-  transition: all 0.2s;
-}
-
-.scroll-down-btn:hover {
-  border-color: var(--orange);
-}
-
-/* Dashboard Two-Column Layout */
-.dashboard-section {
+/* ─── Section 3: Explanation ─── */
+.explain-section {
   display: flex;
   gap: 60px;
-  border-top: 1px solid var(--border);
-  padding-top: 60px;
-  align-items: flex-start;
+  margin-bottom: 60px;
 }
 
-.dashboard-section .left-panel,
-.dashboard-section .right-panel {
-  display: flex;
-  flex-direction: column;
-}
+.explain-left { flex: 0.9; }
+.explain-right { flex: 1.1; }
 
-/* Left Panel */
-.left-panel {
-  flex: 0.8;
-}
-
-.panel-header {
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  color: #999;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.tag-row {
   margin-bottom: 20px;
 }
 
-.status-dot {
-  color: var(--orange);
-  font-size: 0.8rem;
+.orange-tag {
+  background: var(--orange);
+  color: var(--white);
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 1px;
+  font-size: 0.72rem;
 }
 
-.section-title {
-  font-size: 2rem;
-  font-weight: 520;
-  margin: 0 0 15px 0;
+.explain-title {
+  font-size: 2.2rem;
+  font-weight: 500;
+  margin: 0 0 20px;
+  letter-spacing: -1px;
+  line-height: 1.25;
 }
 
-.section-desc {
+.explain-desc {
   color: var(--gray-text);
-  margin-bottom: 25px;
-  line-height: 1.6;
+  line-height: 1.8;
+  font-size: 0.95rem;
+  text-align: justify;
 }
 
-/* Workflow Steps */
-.steps-container {
-  border: 1px solid var(--border);
-  padding: 30px;
-  position: relative;
+.highlight-bold {
+  color: var(--black);
+  font-weight: 700;
 }
 
-.steps-header {
+.highlight-orange {
+  color: var(--orange);
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+/* Workflow */
+.workflow-header {
   font-family: var(--font-mono);
   font-size: 0.8rem;
   color: #999;
-  margin-bottom: 25px;
+  margin-bottom: 24px;
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.diamond-icon {
-  font-size: 1.2rem;
-  line-height: 1;
 }
 
 .workflow-list {
@@ -578,9 +864,7 @@ const startSimulation = () => {
   opacity: 0.3;
 }
 
-.step-info {
-  flex: 1;
-}
+.step-info { flex: 1; }
 
 .step-title {
   font-weight: 520;
@@ -591,222 +875,10 @@ const startSimulation = () => {
 .step-desc {
   font-size: 0.85rem;
   color: var(--gray-text);
+  line-height: 1.5;
 }
 
-/* Right Interactive Console */
-.right-panel {
-  flex: 1.2;
-}
-
-.console-box {
-  border: 1px solid #CCC;
-  padding: 8px;
-}
-
-.console-section {
-  padding: 20px;
-}
-
-.console-section.btn-section {
-  padding-top: 0;
-}
-
-.console-header {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 15px;
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: #666;
-}
-
-.upload-zone {
-  border: 1px dashed #CCC;
-  height: 200px;
-  overflow-y: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.3s;
-  background: #FAFAFA;
-}
-
-.upload-zone.has-files {
-  align-items: flex-start;
-}
-
-.upload-zone:hover {
-  background: #F0F0F0;
-  border-color: #999;
-}
-
-.upload-placeholder {
-  text-align: center;
-}
-
-.upload-icon {
-  width: 40px;
-  height: 40px;
-  border: 1px solid #DDD;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 15px;
-  color: #999;
-}
-
-.upload-title {
-  font-weight: 500;
-  font-size: 0.9rem;
-  margin-bottom: 5px;
-}
-
-.upload-hint {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: #999;
-}
-
-.file-list {
-  width: 100%;
-  padding: 15px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.file-item {
-  display: flex;
-  align-items: center;
-  background: var(--white);
-  padding: 8px 12px;
-  border: 1px solid #EEE;
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-}
-
-.file-name {
-  flex: 1;
-  margin: 0 10px;
-}
-
-.remove-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 1.2rem;
-  color: #999;
-}
-
-.console-divider {
-  display: flex;
-  align-items: center;
-  margin: 10px 0;
-}
-
-.console-divider::before,
-.console-divider::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: #EEE;
-}
-
-.console-divider span {
-  padding: 0 15px;
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  color: #BBB;
-  letter-spacing: 1px;
-}
-
-.input-wrapper {
-  position: relative;
-  border: 1px solid #DDD;
-  background: #FAFAFA;
-}
-
-.code-input {
-  width: 100%;
-  border: none;
-  background: transparent;
-  padding: 20px;
-  font-family: var(--font-mono);
-  font-size: 0.9rem;
-  line-height: 1.6;
-  resize: vertical;
-  outline: none;
-  min-height: 150px;
-}
-
-.model-badge {
-  position: absolute;
-  bottom: 10px;
-  right: 15px;
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  color: #AAA;
-}
-
-.start-engine-btn {
-  width: 100%;
-  background: var(--black);
-  color: var(--white);
-  border: none;
-  padding: 20px;
-  font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 1.1rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  letter-spacing: 1px;
-  position: relative;
-  overflow: hidden;
-}
-
-/* Clickable state (not disabled) */
-.start-engine-btn:not(:disabled) {
-  background: var(--black);
-  border: 1px solid var(--black);
-  animation: pulse-border 2s infinite;
-}
-
-.start-engine-btn:hover:not(:disabled) {
-  background: var(--orange);
-  border-color: var(--orange);
-  transform: translateY(-2px);
-}
-
-.start-engine-btn:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-.start-engine-btn:disabled {
-  background: #E5E5E5;
-  color: #999;
-  cursor: not-allowed;
-  transform: none;
-  border: 1px solid #E5E5E5;
-}
-
-/* Subtle border pulse animation */
-@keyframes pulse-border {
-  0% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.2); }
-  70% { box-shadow: 0 0 0 6px rgba(0, 0, 0, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
-}
-
-/* Responsive */
-@media (max-width: 1024px) {
-  .dashboard-section {
-    flex-direction: column;
-  }
-}
-
+/* ─── Footer ─── */
 .powered-footer {
   display: flex;
   align-items: center;
@@ -823,5 +895,13 @@ const startSimulation = () => {
   height: 20px;
   width: auto;
   opacity: 0.5;
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 1024px) {
+  .dashboard-top { flex-direction: column; }
+  .explain-section { flex-direction: column; }
+  .library-scroll { max-height: 400px; }
+  .main-content { padding: 30px 20px 0; }
 }
 </style>

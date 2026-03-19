@@ -169,16 +169,18 @@ class OntologyGenerator:
     def generate(
         self,
         document_texts: List[str],
-        simulation_requirement: str,
-        additional_context: Optional[str] = None
+        simulation_requirement: Optional[str] = None,
+        additional_context: Optional[str] = None,
+        domain_hints: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Generate ontology definition from mission documents.
 
         Args:
             document_texts: List of document text contents
-            simulation_requirement: Mission analysis requirement description
+            simulation_requirement: Mission analysis requirement description (optional)
             additional_context: Additional context or instructions
+            domain_hints: Optional domain focus hints (e.g. "focus on logistics and supply routes")
 
         Returns:
             Ontology definition (entity_types, edge_types, analysis_summary)
@@ -186,7 +188,8 @@ class OntologyGenerator:
         user_message = self._build_user_message(
             document_texts,
             simulation_requirement,
-            additional_context
+            additional_context,
+            domain_hints
         )
 
         messages = [
@@ -209,8 +212,9 @@ class OntologyGenerator:
     def _build_user_message(
         self,
         document_texts: List[str],
-        simulation_requirement: str,
-        additional_context: Optional[str]
+        simulation_requirement: Optional[str],
+        additional_context: Optional[str],
+        domain_hints: Optional[str] = None
     ) -> str:
         """Build the user message for ontology generation."""
 
@@ -221,11 +225,28 @@ class OntologyGenerator:
             combined_text = combined_text[:self.MAX_TEXT_LENGTH_FOR_LLM]
             combined_text += f"\n\n...(Original document: {original_length} chars, truncated to {self.MAX_TEXT_LENGTH_FOR_LLM} for ontology analysis)..."
 
-        message = f"""## Mission Analysis Requirement
+        message = ""
+
+        if simulation_requirement:
+            message += f"""## Mission Analysis Requirement
 
 {simulation_requirement}
 
-## Document Content
+"""
+        elif domain_hints:
+            message += f"""## Domain Focus
+
+Analyze the documents with the following focus: {domain_hints}
+
+"""
+        else:
+            message += """## Analysis Mode
+
+No specific mission objective provided. Generate a comprehensive, general-purpose military ontology that covers all operationally relevant entities and relationships found in the documents. The ontology should be broad enough to support multiple types of mission queries.
+
+"""
+
+        message += f"""## Document Content
 
 {combined_text}
 """

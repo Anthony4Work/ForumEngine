@@ -151,17 +151,13 @@ def generate_ontology():
         
         # 获取参数
         simulation_requirement = request.form.get('simulation_requirement', '')
+        domain_hints = request.form.get('domain_hints', '')
         project_name = request.form.get('project_name', 'Unnamed Project')
         additional_context = request.form.get('additional_context', '')
-        
+
         logger.debug(f"项目名称: {project_name}")
-        logger.debug(f"模拟需求: {simulation_requirement[:100]}...")
-        
-        if not simulation_requirement:
-            return jsonify({
-                "success": False,
-                "error": "请提供模拟需求描述 (simulation_requirement)"
-            }), 400
+        logger.debug(f"模拟需求: {simulation_requirement[:100] if simulation_requirement else '(none)'}...")
+        logger.debug(f"域提示: {domain_hints[:100] if domain_hints else '(none)'}...")
         
         # 获取上传的文件
         uploaded_files = request.files.getlist('files')
@@ -173,7 +169,8 @@ def generate_ontology():
         
         # 创建项目
         project = ProjectManager.create_project(name=project_name)
-        project.simulation_requirement = simulation_requirement
+        project.simulation_requirement = simulation_requirement if simulation_requirement else None
+        project.domain_hints = domain_hints if domain_hints else None
         logger.info(f"创建项目: {project.project_id}")
         
         # 保存文件并提取文本
@@ -216,8 +213,9 @@ def generate_ontology():
         generator = OntologyGenerator()
         ontology = generator.generate(
             document_texts=document_texts,
-            simulation_requirement=simulation_requirement,
-            additional_context=additional_context if additional_context else None
+            simulation_requirement=simulation_requirement if simulation_requirement else None,
+            additional_context=additional_context if additional_context else None,
+            domain_hints=domain_hints if domain_hints else None
         )
         
         # 保存本体到项目
@@ -464,12 +462,19 @@ def build_graph():
                 )
                 graph_data = builder.get_graph_data(graph_id)
                 
-                # 更新项目状态
-                project.status = ProjectStatus.GRAPH_COMPLETED
-                ProjectManager.save_project(project)
-                
+                # 更新项目状态 + graph library metadata
                 node_count = graph_data.get("node_count", 0)
                 edge_count = graph_data.get("edge_count", 0)
+                project.status = ProjectStatus.GRAPH_COMPLETED
+                project.node_count = node_count
+                project.edge_count = edge_count
+                project.graph_name = project.graph_name or graph_name
+                # Extract entity type names from ontology
+                if project.ontology and "entity_types" in project.ontology:
+                    project.entity_types_list = [
+                        et["name"] for et in project.ontology["entity_types"]
+                    ]
+                ProjectManager.save_project(project)
                 build_logger.info(f"[{task_id}] 图谱构建完成: graph_id={graph_id}, 节点={node_count}, 边={edge_count}")
                 
                 # 完成
@@ -603,12 +608,257 @@ def delete_graph(graph_id: str):
         
         builder = GraphBuilderService()
         builder.delete_graph(graph_id)
-        
+
         return jsonify({
             "success": True,
             "message": f"图谱已删除: {graph_id}"
         })
-        
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+# ============== Graph Library API ==============
+
+@graph_bp.route('/library', methods=['GET'])
+def get_graph_library():
+    """
+    List all completed graphs as reusable knowledge graph assets.
+    Returns projects with status >= GRAPH_COMPLETED, enriched with graph metadata.
+    """
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        projects = ProjectManager.list_projects(limit=limit)
+
+        graphs = []
+        for p in projects:
+            if p.status not in (ProjectStatus.GRAPH_COMPLETED,) or not p.graph_id:
+                continue
+            graphs.append({
+                "graph_id": p.graph_id,
+                "project_id": p.project_id,
+                "name": p.graph_name or p.name,
+                "description": p.graph_description or p.analysis_summary or "",
+                "tags": p.graph_tags,
+                "documents": p.files,
+                "node_count": p.node_count,
+                "edge_count": p.edge_count,
+                "entity_types": p.entity_types_list,
+                "deliberation_count": p.deliberation_count,
+                "simulation_requirement": p.simulation_requirement,
+                "domain_hints": p.domain_hints,
+                "created_at": p.created_at,
+                "last_queried_at": p.last_queried_at,
+            })
+
+        return jsonify({
+            "success": True,
+            "data": graphs,
+            "count": len(graphs)
+        })
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@graph_bp.route('/library/<graph_id>', methods=['GET'])
+def get_graph_detail(graph_id: str):
+    """
+    Get detailed info for a single graph, including its deliberation history.
+    """
+    try:
+        # Find the project that owns this graph
+        projects = ProjectManager.list_projects(limit=500)
+        project = next((p for p in projects if p.graph_id == graph_id), None)
+
+        if not project:
+            return jsonify({"success": False, "error": f"Graph not found: {graph_id}"}), 404
+
+        # Get associated simulations
+        from ..services.simulation_manager import SimulationManager
+        manager = SimulationManager()
+        simulations = manager.list_simulations(project_id=project.project_id)
+
+        sim_list = []
+        for s in simulations:
+            sim_data = s.to_simple_dict()
+            sim_data["mission_objective"] = getattr(s, "mission_objective", "") or project.simulation_requirement or ""
+            sim_list.append(sim_data)
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "graph_id": graph_id,
+                "project_id": project.project_id,
+                "name": project.graph_name or project.name,
+                "description": project.graph_description or project.analysis_summary or "",
+                "tags": project.graph_tags,
+                "documents": project.files,
+                "node_count": project.node_count,
+                "edge_count": project.edge_count,
+                "entity_types": project.entity_types_list,
+                "ontology": project.ontology,
+                "simulation_requirement": project.simulation_requirement,
+                "domain_hints": project.domain_hints,
+                "created_at": project.created_at,
+                "deliberations": sim_list,
+            }
+        })
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@graph_bp.route('/library/<graph_id>', methods=['PATCH'])
+def update_graph_meta(graph_id: str):
+    """
+    Update graph metadata (name, description, tags).
+    """
+    try:
+        projects = ProjectManager.list_projects(limit=500)
+        project = next((p for p in projects if p.graph_id == graph_id), None)
+
+        if not project:
+            return jsonify({"success": False, "error": f"Graph not found: {graph_id}"}), 404
+
+        data = request.get_json() or {}
+
+        if "name" in data:
+            project.graph_name = data["name"]
+        if "description" in data:
+            project.graph_description = data["description"]
+        if "tags" in data:
+            project.graph_tags = data["tags"]
+
+        ProjectManager.save_project(project)
+
+        return jsonify({
+            "success": True,
+            "message": f"Graph metadata updated: {graph_id}"
+        })
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@graph_bp.route('/library/<graph_id>', methods=['DELETE'])
+def delete_graph_from_library(graph_id: str):
+    """
+    Delete a graph from Neo4j and its associated project.
+    """
+    try:
+        projects = ProjectManager.list_projects(limit=500)
+        project = next((p for p in projects if p.graph_id == graph_id), None)
+
+        if not project:
+            return jsonify({"success": False, "error": f"Graph not found: {graph_id}"}), 404
+
+        # Delete from Neo4j
+        builder = GraphBuilderService()
+        builder.delete_graph(graph_id)
+
+        # Delete project files
+        ProjectManager.delete_project(project.project_id)
+
+        return jsonify({
+            "success": True,
+            "message": f"Graph and project deleted: {graph_id}"
+        })
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@graph_bp.route('/library/<graph_id>/deliberate', methods=['POST'])
+def deliberate_on_graph(graph_id: str):
+    """
+    Start a new deliberation on an existing graph.
+    Creates a simulation with a new mission_objective without rebuilding the graph.
+
+    Request (JSON):
+        {
+            "mission_objective": "What is the best route of advance?",
+            "max_rounds": 25  // optional
+        }
+
+    Returns:
+        {
+            "success": true,
+            "data": {
+                "simulation_id": "sim_xxxx",
+                "graph_id": "mirofish_xxxx",
+                "project_id": "proj_xxxx",
+                "mission_objective": "..."
+            }
+        }
+    """
+    try:
+        # Find the project that owns this graph
+        projects = ProjectManager.list_projects(limit=500)
+        project = next((p for p in projects if p.graph_id == graph_id), None)
+
+        if not project:
+            return jsonify({"success": False, "error": f"Graph not found: {graph_id}"}), 404
+
+        data = request.get_json() or {}
+        mission_objective = data.get("mission_objective", "").strip()
+
+        if not mission_objective:
+            return jsonify({
+                "success": False,
+                "error": "mission_objective is required"
+            }), 400
+
+        # Create simulation with the new mission objective
+        from ..services.simulation_manager import SimulationManager
+        manager = SimulationManager()
+        state = manager.create_simulation(
+            project_id=project.project_id,
+            graph_id=graph_id,
+        )
+
+        # Store mission_objective on the simulation state
+        state.mission_objective = mission_objective
+        manager._save_simulation_state(state)
+
+        # Update graph library stats
+        project.deliberation_count += 1
+        from datetime import datetime as dt
+        project.last_queried_at = dt.now().isoformat()
+        ProjectManager.save_project(project)
+
+        logger.info(f"New deliberation on graph {graph_id}: sim={state.simulation_id}, objective={mission_objective[:80]}")
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "simulation_id": state.simulation_id,
+                "graph_id": graph_id,
+                "project_id": project.project_id,
+                "mission_objective": mission_objective,
+            }
+        })
+
     except Exception as e:
         return jsonify({
             "success": False,

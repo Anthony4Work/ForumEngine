@@ -64,12 +64,6 @@ def test_add_episode():
 
 def test_search():
     """Test 3: Search the graph for the data we just added."""
-    from graphiti_core.search.search_config_recipes import (
-        EDGE_HYBRID_SEARCH_RRF,
-        NODE_HYBRID_SEARCH_RRF,
-    )
-    import copy
-
     print("=" * 60)
     print("Test 3: Search the graph")
     print("=" * 60)
@@ -79,38 +73,34 @@ def test_search():
 
     # Search edges (facts)
     print("  Searching edges for 'Colonel Smith'...")
-    edge_config = copy.deepcopy(EDGE_HYBRID_SEARCH_RRF)
-    edge_config.limit = 5
     edge_results = run_async(graphiti.search(
         query="Colonel Smith brigade",
-        config=edge_config,
         group_ids=[group_id],
+        num_results=5,
     ))
 
-    if hasattr(edge_results, 'edges') and edge_results.edges:
-        print(f"  [OK] Found {len(edge_results.edges)} edges:")
-        for e in edge_results.edges[:5]:
+    if edge_results:
+        print(f"  [OK] Found {len(edge_results)} edges:")
+        for e in edge_results[:5]:
             print(f"       - {e.fact}")
     else:
         print("  [WARN] No edges found (search index may need time to populate)")
 
-    # Search nodes
+    # Search with different query
     print()
-    print("  Searching nodes for 'infantry'...")
-    node_config = copy.deepcopy(NODE_HYBRID_SEARCH_RRF)
-    node_config.limit = 5
+    print("  Searching for 'infantry'...")
     node_results = run_async(graphiti.search(
         query="infantry brigade",
-        config=node_config,
         group_ids=[group_id],
+        num_results=5,
     ))
 
-    if hasattr(node_results, 'nodes') and node_results.nodes:
-        print(f"  [OK] Found {len(node_results.nodes)} nodes:")
-        for n in node_results.nodes[:5]:
-            print(f"       - {n.name} (labels: {n.labels})")
+    if node_results:
+        print(f"  [OK] Found {len(node_results)} edges:")
+        for e in node_results[:5]:
+            print(f"       - {e.fact}")
     else:
-        print("  [WARN] No nodes found (search index may need time to populate)")
+        print("  [WARN] No results found (search index may need time to populate)")
 
     print()
 
@@ -141,6 +131,8 @@ def test_pagination():
 
 def test_cleanup():
     """Test 5: Clean up test data."""
+    from graphiti_core.nodes import EntityNode, EpisodicNode
+
     print("=" * 60)
     print("Test 5: Cleanup test group")
     print("=" * 60)
@@ -151,7 +143,8 @@ def test_cleanup():
     # Prompt before deleting
     answer = input(f"  Delete test group '{group_id}'? [y/N]: ").strip().lower()
     if answer == 'y':
-        run_async(graphiti.delete_group(group_id))
+        run_async(EpisodicNode.delete_by_group_id(graphiti.driver, group_id))
+        run_async(EntityNode.delete_by_group_id(graphiti.driver, group_id))
         print("  [OK] Test group deleted")
     else:
         print("  [SKIP] Kept test data — you can inspect it in Neo4j Browser")

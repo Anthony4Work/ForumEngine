@@ -40,15 +40,15 @@ def _ensure_loop() -> asyncio.AbstractEventLoop:
     return _loop
 
 
-def run_async(coro: Coroutine) -> Any:
+def run_async(coro: Coroutine, timeout: float | None = 120) -> Any:
     """Execute an async coroutine on the shared Graphiti event loop.
 
     Safe to call from any thread (main, Flask request, background workers).
-    Blocks the caller until the coroutine completes.
+    Blocks the caller until the coroutine completes or *timeout* seconds elapse.
     """
     loop = _ensure_loop()
     future = asyncio.run_coroutine_threadsafe(coro, loop)
-    return future.result()
+    return future.result(timeout=timeout)
 
 
 def get_graphiti() -> Graphiti:

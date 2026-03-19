@@ -473,12 +473,12 @@ def prepare_simulation():
                 "error": f"项目不存在: {state.project_id}"
             }), 404
 
-        # Get simulation requirement
-        simulation_requirement = project.simulation_requirement or ""
+        # Get simulation requirement — prefer per-simulation mission_objective, fall back to project
+        simulation_requirement = state.mission_objective or project.simulation_requirement or ""
         if not simulation_requirement:
             return jsonify({
                 "success": False,
-                "error": "项目缺少模拟需求描述 (simulation_requirement)"
+                "error": "Missing mission objective. Provide it via /library/{graphId}/deliberate or set simulation_requirement on the project."
             }), 400
 
         # Get document text
@@ -909,6 +909,12 @@ def get_simulation_history():
                 ]
             else:
                 sim_dict["files"] = []
+
+            # Graph library metadata for grouping
+            if project:
+                sim_dict["graph_name"] = getattr(project, 'graph_name', None) or project.name
+                sim_dict["node_count"] = getattr(project, 'node_count', 0)
+                sim_dict["edge_count"] = getattr(project, 'edge_count', 0)
 
             sim_dict["report_id"] = _get_report_id_for_simulation(sim.simulation_id)
             sim_dict["version"] = "v2.0.0"

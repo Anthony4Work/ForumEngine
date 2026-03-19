@@ -46,9 +46,20 @@ class Project:
     
     # 配置
     simulation_requirement: Optional[str] = None
+    domain_hints: Optional[str] = None
     chunk_size: int = 500
     chunk_overlap: int = 50
-    
+
+    # Graph library metadata
+    graph_name: Optional[str] = None
+    graph_description: Optional[str] = None
+    graph_tags: List[str] = field(default_factory=list)
+    node_count: int = 0
+    edge_count: int = 0
+    entity_types_list: List[str] = field(default_factory=list)
+    deliberation_count: int = 0
+    last_queried_at: Optional[str] = None
+
     # 错误信息
     error: Optional[str] = None
     
@@ -67,8 +78,17 @@ class Project:
             "graph_id": self.graph_id,
             "graph_build_task_id": self.graph_build_task_id,
             "simulation_requirement": self.simulation_requirement,
+            "domain_hints": self.domain_hints,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
+            "graph_name": self.graph_name,
+            "graph_description": self.graph_description,
+            "graph_tags": self.graph_tags,
+            "node_count": self.node_count,
+            "edge_count": self.edge_count,
+            "entity_types_list": self.entity_types_list,
+            "deliberation_count": self.deliberation_count,
+            "last_queried_at": self.last_queried_at,
             "error": self.error
         }
     
@@ -92,8 +112,17 @@ class Project:
             graph_id=data.get('graph_id'),
             graph_build_task_id=data.get('graph_build_task_id'),
             simulation_requirement=data.get('simulation_requirement'),
+            domain_hints=data.get('domain_hints'),
             chunk_size=data.get('chunk_size', 500),
             chunk_overlap=data.get('chunk_overlap', 50),
+            graph_name=data.get('graph_name'),
+            graph_description=data.get('graph_description'),
+            graph_tags=data.get('graph_tags', []),
+            node_count=data.get('node_count', 0),
+            edge_count=data.get('edge_count', 0),
+            entity_types_list=data.get('entity_types_list', []),
+            deliberation_count=data.get('deliberation_count', 0),
+            last_queried_at=data.get('last_queried_at'),
             error=data.get('error')
         )
 

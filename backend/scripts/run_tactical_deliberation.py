@@ -594,7 +594,7 @@ Respond with ONLY valid JSON:
             from graphiti_core.search.search_config_recipes import EDGE_HYBRID_SEARCH_RRF
 
             graphiti = get_graphiti()
-            results = run_async(graphiti.search(
+            results = run_async(graphiti.search_(
                 query=query,
                 config=EDGE_HYBRID_SEARCH_RRF,
                 group_ids=[self.graph_id],

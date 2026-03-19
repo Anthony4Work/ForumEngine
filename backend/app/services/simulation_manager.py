@@ -60,6 +60,9 @@ class SimulationState:
     coas_proposed: int = 0
     deliberation_status: str = "not_started"
 
+    # Mission objective (per-deliberation, independent of project)
+    mission_objective: str = ""
+
     # Timestamps
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -74,6 +77,7 @@ class SimulationState:
             "project_id": self.project_id,
             "graph_id": self.graph_id,
             "status": self.status.value,
+            "mission_objective": self.mission_objective,
             "entities_count": self.entities_count,
             "profiles_count": self.profiles_count,
             "entity_types": self.entity_types,
@@ -97,6 +101,7 @@ class SimulationState:
             "project_id": self.project_id,
             "graph_id": self.graph_id,
             "status": self.status.value,
+            "mission_objective": self.mission_objective,
             "entities_count": self.entities_count,
             "profiles_count": self.profiles_count,
             "entity_types": self.entity_types,
@@ -166,6 +171,7 @@ class SimulationManager:
             project_id=data.get("project_id", ""),
             graph_id=data.get("graph_id", ""),
             status=SimulationStatus(data.get("status", "created")),
+            mission_objective=data.get("mission_objective", ""),
             entities_count=data.get("entities_count", 0),
             profiles_count=data.get("profiles_count", 0),
             entity_types=data.get("entity_types", []),

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 from graphiti_core import Graphiti
-from graphiti_core.nodes import EpisodeType, EntityNode
+from graphiti_core.nodes import EpisodeType, EntityNode, EpisodicNode
 from graphiti_core.edges import EntityEdge
 from graphiti_core.graphiti import RawEpisode
 
@@ -381,4 +381,5 @@ class GraphBuilderService:
 
     def delete_graph(self, graph_id: str):
         """Delete a graph (all data in the group)."""
-        run_async(self.graphiti.delete_group(graph_id))
+        run_async(EpisodicNode.delete_by_group_id(self.graphiti.driver, graph_id))
+        run_async(EntityNode.delete_by_group_id(self.graphiti.driver, graph_id))

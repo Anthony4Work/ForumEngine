@@ -1,6 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Home from '../views/Home.vue'
 import Process from '../views/MainView.vue'
+import GraphLibrary from '../views/GraphLibrary.vue'
+import NewQuery from '../views/NewQuery.vue'
 import SimulationView from '../views/SimulationView.vue'
 import SimulationRunView from '../views/SimulationRunView.vue'
 import ReportView from '../views/ReportView.vue'
@@ -11,6 +13,17 @@ const routes = [
     path: '/',
     name: 'Home',
     component: Home
+  },
+  {
+    path: '/library',
+    name: 'GraphLibrary',
+    component: GraphLibrary
+  },
+  {
+    path: '/library/:graphId/query',
+    name: 'NewQuery',
+    component: NewQuery,
+    props: true
   },
   {
     path: '/process/:projectId',

@@ -321,7 +321,7 @@ class OasisProfileGenerator:
                 try:
                     config = copy.deepcopy(EDGE_HYBRID_SEARCH_RRF)
                     config.limit = 30
-                    return run_async(self.graphiti.search(
+                    return run_async(self.graphiti.search_(
                         query=comprehensive_query,
                         config=config,
                         group_ids=[self.graph_id],
@@ -343,7 +343,7 @@ class OasisProfileGenerator:
                 try:
                     config = copy.deepcopy(NODE_HYBRID_SEARCH_RRF)
                     config.limit = 20
-                    return run_async(self.graphiti.search(
+                    return run_async(self.graphiti.search_(
                         query=comprehensive_query,
                         config=config,
                         group_ids=[self.graph_id],
