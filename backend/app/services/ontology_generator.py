@@ -1,6 +1,7 @@
 """
-本体生成服务
-接口1：分析文本内容，生成适合社会模拟的实体和关系类型定义
+Ontology Generation Service
+Analyzes document content and generates entity/relationship type definitions
+for tactical/military mission analysis and decision support.
 """
 
 import json
@@ -8,162 +9,163 @@ from typing import Dict, Any, List, Optional
 from ..utils.llm_client import LLMClient
 
 
-# 本体生成的系统提示词
-ONTOLOGY_SYSTEM_PROMPT = """你是一个专业的知识图谱本体设计专家。你的任务是分析给定的文本内容和模拟需求，设计适合**社交媒体舆论模拟**的实体类型和关系类型。
+ONTOLOGY_SYSTEM_PROMPT = """You are an expert knowledge graph ontology designer specialized in military and tactical domains. Your task is to analyze the given document content and mission analysis requirement, and design entity types and relationship types suitable for **tactical decision support and mission analysis**.
 
-**重要：你必须输出有效的JSON格式数据，不要输出任何其他内容。**
+**IMPORTANT: You must output valid JSON data only. Do not output anything else.**
 
-## 核心任务背景
+## Core Task Background
 
-我们正在构建一个**社交媒体舆论模拟系统**。在这个系统中：
-- 每个实体都是一个可以在社交媒体上发声、互动、传播信息的"账号"或"主体"
-- 实体之间会相互影响、转发、评论、回应
-- 我们需要模拟舆论事件中各方的反应和信息传播路径
+We are building a **tactical decision support system**. In this system:
+- Each entity represents a real operational element in the battlespace: units, threats, assets, locations, objectives, routes, etc.
+- Entities have relationships that reflect operational dependencies, threats, support, command, and geographic proximity.
+- The knowledge graph will be used by AI staff officers to analyze the situation, develop courses of action (COAs), and support commander decisions.
 
-因此，**实体必须是现实中真实存在的、可以在社媒上发声和互动的主体**：
+Therefore, **entities must be concrete, operationally relevant elements that exist in the battlespace or mission context**:
 
-**可以是**：
-- 具体的个人（公众人物、当事人、意见领袖、专家学者、普通人）
-- 公司、企业（包括其官方账号）
-- 组织机构（大学、协会、NGO、工会等）
-- 政府部门、监管机构
-- 媒体机构（报纸、电视台、自媒体、网站）
-- 社交媒体平台本身
-- 特定群体代表（如校友会、粉丝团、维权群体等）
+**Valid entity categories**:
+- Military units and formations (platoons, companies, battalions, brigades, task forces)
+- Geographic locations and tactical positions (hills, grid references, airfields, urban areas)
+- Mission objectives (named objectives, phase lines, checkpoints)
+- Threats and enemy forces (enemy units, IED clusters, sniper positions, minefields, air defense)
+- Assets and equipment (vehicles, UAVs, communications, weapons systems, ISR platforms)
+- Routes and corridors of movement (MSRs, ASRs, infiltration lanes)
+- Supply and logistics points (FOBs, LZs, field hospitals, ammo caches, water points)
+- Terrain features of tactical significance (rivers, mountain passes, ridgelines, forests)
+- Civilian entities in the area of operations (villages, population centers, key leaders, NGOs)
+- Organizations (coalition forces, allied units, international organizations)
 
-**不可以是**：
-- 抽象概念（如"舆论"、"情绪"、"趋势"）
-- 主题/话题（如"学术诚信"、"教育改革"）
-- 观点/态度（如"支持方"、"反对方"）
+**Invalid entity categories** (DO NOT create these):
+- Abstract concepts (strategy, tactics, morale, victory, doctrine)
+- Emotional states (fear, confidence, motivation)
+- Generic categories (friendly forces, enemy forces — be specific)
+- Political ideologies or viewpoints
 
-## 输出格式
+## Output Format
 
-请输出JSON格式，包含以下结构：
+Output JSON with the following structure:
 
 ```json
 {
     "entity_types": [
         {
-            "name": "实体类型名称（英文，PascalCase）",
-            "description": "简短描述（英文，不超过100字符）",
+            "name": "EntityTypeName (English, PascalCase)",
+            "description": "Brief description (English, max 100 chars)",
             "attributes": [
                 {
-                    "name": "属性名（英文，snake_case）",
+                    "name": "attribute_name (English, snake_case)",
                     "type": "text",
-                    "description": "属性描述"
+                    "description": "Attribute description"
                 }
             ],
-            "examples": ["示例实体1", "示例实体2"]
+            "examples": ["Example entity 1", "Example entity 2"]
         }
     ],
     "edge_types": [
         {
-            "name": "关系类型名称（英文，UPPER_SNAKE_CASE）",
-            "description": "简短描述（英文，不超过100字符）",
+            "name": "RELATIONSHIP_NAME (English, UPPER_SNAKE_CASE)",
+            "description": "Brief description (English, max 100 chars)",
             "source_targets": [
-                {"source": "源实体类型", "target": "目标实体类型"}
+                {"source": "SourceEntityType", "target": "TargetEntityType"}
             ],
             "attributes": []
         }
     ],
-    "analysis_summary": "对文本内容的简要分析说明（中文）"
+    "analysis_summary": "Brief analysis of the document content and its operational significance"
 }
 ```
 
-## 设计指南（极其重要！）
+## Design Guidelines (CRITICAL!)
 
-### 1. 实体类型设计 - 必须严格遵守
+### 1. Entity Type Design — Strict Rules
 
-**数量要求：必须正好10个实体类型**
+**Quantity: Exactly 10 entity types**
 
-**层次结构要求（必须同时包含具体类型和兜底类型）**：
+**Hierarchy (must include both specific and fallback types)**:
 
-你的10个实体类型必须包含以下层次：
+Your 10 entity types must follow this structure:
 
-A. **兜底类型（必须包含，放在列表最后2个）**：
-   - `Person`: 任何自然人个体的兜底类型。当一个人不属于其他更具体的人物类型时，归入此类。
-   - `Organization`: 任何组织机构的兜底类型。当一个组织不属于其他更具体的组织类型时，归入此类。
+A. **Fallback types (MUST be the last 2 in the list)**:
+   - `MilitaryUnit`: Fallback for any military unit, formation, or tactical grouping not covered by more specific types.
+   - `Organization`: Fallback for any non-military organization (NGO, civilian agency, allied force, political entity).
 
-B. **具体类型（8个，根据文本内容设计）**：
-   - 针对文本中出现的主要角色，设计更具体的类型
-   - 例如：如果文本涉及学术事件，可以有 `Student`, `Professor`, `University`
-   - 例如：如果文本涉及商业事件，可以有 `Company`, `CEO`, `Employee`
+B. **Specific types (8, designed based on document content)**:
+   - Identify the most operationally significant entity categories from the document.
+   - Example: If the document involves a ground assault, you might have: `InfantryUnit`, `ArmorUnit`, `Threat`, `Objective`, `Route`, `SupplyPoint`, `TerrainFeature`, `CivilianEntity`
+   - Example: If the document involves ISR/recon, you might have: `ReconElement`, `Threat`, `Sensor`, `Location`, `Objective`, `Route`, `TerrainFeature`, `CivilianEntity`
 
-**为什么需要兜底类型**：
-- 文本中会出现各种人物，如"中小学教师"、"路人甲"、"某位网友"
-- 如果没有专门的类型匹配，他们应该被归入 `Person`
-- 同理，小型组织、临时团体等应该归入 `Organization`
+**Why fallback types are needed**:
+- Documents mention many entities that may not fit specific categories.
+- Unclassified military units should fall into `MilitaryUnit`.
+- NGOs, civilian government agencies, allied organizations should fall into `Organization`.
 
-**具体类型的设计原则**：
-- 从文本中识别出高频出现或关键的角色类型
-- 每个具体类型应该有明确的边界，避免重叠
-- description 必须清晰说明这个类型和兜底类型的区别
+**Specific type design principles**:
+- Identify the most frequently occurring or operationally critical entity types in the document.
+- Each type should have clear boundaries — avoid overlapping definitions.
+- Description must clearly state how this type differs from the fallback types.
 
-### 2. 关系类型设计
+### 2. Relationship Type Design
 
-- 数量：6-10个
-- 关系应该反映社媒互动中的真实联系
-- 确保关系的 source_targets 涵盖你定义的实体类型
+- Quantity: 8-10 relationship types
+- Relationships must reflect **operational dependencies and tactical connections**
+- Ensure source_targets cover the entity types you defined
 
-### 3. 属性设计
+### 3. Attribute Design
 
-- 每个实体类型1-3个关键属性
-- **注意**：属性名不能使用 `name`、`uuid`、`group_id`、`created_at`、`summary`（这些是系统保留字）
-- 推荐使用：`full_name`, `title`, `role`, `position`, `location`, `description` 等
+- 1-3 key attributes per entity type
+- **RESERVED NAMES (cannot be used as attribute names)**: `name`, `uuid`, `group_id`, `created_at`, `summary`
+- Recommended military attributes: `unit_designation`, `grid_reference`, `terrain_type`, `threat_type`, `assessed_strength`, `capability`, `quantity`, `availability`, `status`, `priority`, `conditions`, `route_condition`, `distance_km`, `elevation`, `trafficability`
 
-## 实体类型参考
+## Entity Type Reference (for inspiration)
 
-**个人类（具体）**：
-- Student: 学生
-- Professor: 教授/学者
-- Journalist: 记者
-- Celebrity: 明星/网红
-- Executive: 高管
-- Official: 政府官员
-- Lawyer: 律师
-- Doctor: 医生
+**Unit types (specific)**:
+- InfantryUnit: Infantry formation (platoon, company, battalion)
+- ArmorUnit: Armored/mechanized formation
+- ArtilleryUnit: Artillery battery or battalion
+- EngineerUnit: Combat engineer element
+- ReconElement: Reconnaissance/scout element
+- SpecialOpsUnit: Special operations team
 
-**个人类（兜底）**：
-- Person: 任何自然人（不属于上述具体类型时使用）
+**Unit type (fallback)**:
+- MilitaryUnit: Any military unit not fitting specific types above
 
-**组织类（具体）**：
-- University: 高校
-- Company: 公司企业
-- GovernmentAgency: 政府机构
-- MediaOutlet: 媒体机构
-- Hospital: 医院
-- School: 中小学
-- NGO: 非政府组织
+**Operational types**:
+- Threat: Enemy force, IED, minefield, sniper position, air defense
+- Objective: Named mission objective, phase line, checkpoint, key terrain
+- Asset: Equipment, vehicle, UAV, ISR platform, weapons system, comms relay
+- Route: Movement corridor (MSR, ASR, infiltration lane)
+- SupplyPoint: FOB, LZ, field hospital, ammo cache, water point
+- Location: Tactical position, grid reference, assembly area, airfield
+- TerrainFeature: River, mountain pass, ridgeline, dense urban area, forest
+- CivilianEntity: Village, refugee camp, key leader, NGO clinic, market
 
-**组织类（兜底）**：
-- Organization: 任何组织机构（不属于上述具体类型时使用）
+**Organization type (fallback)**:
+- Organization: Any non-military organization (NGO, UN agency, civilian authority)
 
-## 关系类型参考
+## Relationship Type Reference
 
-- WORKS_FOR: 工作于
-- STUDIES_AT: 就读于
-- AFFILIATED_WITH: 隶属于
-- REPRESENTS: 代表
-- REGULATES: 监管
-- REPORTS_ON: 报道
-- COMMENTS_ON: 评论
-- RESPONDS_TO: 回应
-- SUPPORTS: 支持
-- OPPOSES: 反对
-- COLLABORATES_WITH: 合作
-- COMPETES_WITH: 竞争
+- ASSIGNED_TO: Unit assigned to a mission or area
+- THREATENS: Threat endangers a unit, location, or objective
+- SUPPORTS: Unit or asset provides support to another element
+- LOCATED_AT: Entity is positioned at a location
+- CONNECTED_BY: Locations linked by a route
+- SUPPLIES: Supply point provides logistics to a unit
+- OVERLOOKS: Terrain feature has line of sight over a location
+- ADJACENT_TO: Entities are geographically adjacent
+- COMMANDS: Higher echelon commands a subordinate unit
+- INTERDICTS: Threat or unit blocks/denies a route or area
 """
 
 
 class OntologyGenerator:
     """
-    本体生成器
-    分析文本内容，生成实体和关系类型定义
+    Ontology Generator
+    Analyzes document content to produce entity and relationship type definitions
+    for tactical/military mission analysis.
     """
-    
+
     def __init__(self, llm_client: Optional[LLMClient] = None):
         self.llm_client = llm_client or LLMClient()
-    
+
     def generate(
         self,
         document_texts: List[str],
@@ -171,111 +173,101 @@ class OntologyGenerator:
         additional_context: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        生成本体定义
-        
+        Generate ontology definition from mission documents.
+
         Args:
-            document_texts: 文档文本列表
-            simulation_requirement: 模拟需求描述
-            additional_context: 额外上下文
-            
+            document_texts: List of document text contents
+            simulation_requirement: Mission analysis requirement description
+            additional_context: Additional context or instructions
+
         Returns:
-            本体定义（entity_types, edge_types等）
+            Ontology definition (entity_types, edge_types, analysis_summary)
         """
-        # 构建用户消息
         user_message = self._build_user_message(
-            document_texts, 
+            document_texts,
             simulation_requirement,
             additional_context
         )
-        
+
         messages = [
             {"role": "system", "content": ONTOLOGY_SYSTEM_PROMPT},
             {"role": "user", "content": user_message}
         ]
-        
-        # 调用LLM
+
         result = self.llm_client.chat_json(
             messages=messages,
             temperature=0.3,
             max_tokens=4096
         )
-        
-        # 验证和后处理
+
         result = self._validate_and_process(result)
-        
+
         return result
-    
-    # 传给 LLM 的文本最大长度（5万字）
+
     MAX_TEXT_LENGTH_FOR_LLM = 50000
-    
+
     def _build_user_message(
         self,
         document_texts: List[str],
         simulation_requirement: str,
         additional_context: Optional[str]
     ) -> str:
-        """构建用户消息"""
-        
-        # 合并文本
+        """Build the user message for ontology generation."""
+
         combined_text = "\n\n---\n\n".join(document_texts)
         original_length = len(combined_text)
-        
-        # 如果文本超过5万字，截断（仅影响传给LLM的内容，不影响图谱构建）
+
         if len(combined_text) > self.MAX_TEXT_LENGTH_FOR_LLM:
             combined_text = combined_text[:self.MAX_TEXT_LENGTH_FOR_LLM]
-            combined_text += f"\n\n...(原文共{original_length}字，已截取前{self.MAX_TEXT_LENGTH_FOR_LLM}字用于本体分析)..."
-        
-        message = f"""## 模拟需求
+            combined_text += f"\n\n...(Original document: {original_length} chars, truncated to {self.MAX_TEXT_LENGTH_FOR_LLM} for ontology analysis)..."
+
+        message = f"""## Mission Analysis Requirement
 
 {simulation_requirement}
 
-## 文档内容
+## Document Content
 
 {combined_text}
 """
-        
+
         if additional_context:
             message += f"""
-## 额外说明
+## Additional Context
 
 {additional_context}
 """
-        
-        message += """
-请根据以上内容，设计适合社会舆论模拟的实体类型和关系类型。
 
-**必须遵守的规则**：
-1. 必须正好输出10个实体类型
-2. 最后2个必须是兜底类型：Person（个人兜底）和 Organization（组织兜底）
-3. 前8个是根据文本内容设计的具体类型
-4. 所有实体类型必须是现实中可以发声的主体，不能是抽象概念
-5. 属性名不能使用 name、uuid、group_id 等保留字，用 full_name、org_name 等替代
+        message += """
+Based on the above content, design entity types and relationship types suitable for tactical mission analysis and decision support.
+
+**Mandatory rules**:
+1. Output exactly 10 entity types
+2. The last 2 must be fallback types: MilitaryUnit (unit fallback) and Organization (org fallback)
+3. The first 8 are specific types designed from the document content
+4. All entity types must be concrete, operationally relevant elements — no abstract concepts
+5. Attribute names cannot use reserved words: name, uuid, group_id, created_at, summary
 """
-        
+
         return message
     
     def _validate_and_process(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        """验证和后处理结果"""
-        
-        # 确保必要字段存在
+        """Validate and post-process the LLM-generated ontology."""
+
         if "entity_types" not in result:
             result["entity_types"] = []
         if "edge_types" not in result:
             result["edge_types"] = []
         if "analysis_summary" not in result:
             result["analysis_summary"] = ""
-        
-        # 验证实体类型
+
         for entity in result["entity_types"]:
             if "attributes" not in entity:
                 entity["attributes"] = []
             if "examples" not in entity:
                 entity["examples"] = []
-            # 确保description不超过100字符
             if len(entity.get("description", "")) > 100:
                 entity["description"] = entity["description"][:97] + "..."
-        
-        # 验证关系类型
+
         for edge in result["edge_types"]:
             if "source_targets" not in edge:
                 edge["source_targets"] = []
@@ -283,65 +275,59 @@ class OntologyGenerator:
                 edge["attributes"] = []
             if len(edge.get("description", "")) > 100:
                 edge["description"] = edge["description"][:97] + "..."
-        
-        # Zep API 限制：最多 10 个自定义实体类型，最多 10 个自定义边类型
+
+        # Zep API limits: max 10 custom entity types, max 10 custom edge types
         MAX_ENTITY_TYPES = 10
         MAX_EDGE_TYPES = 10
-        
-        # 兜底类型定义
-        person_fallback = {
-            "name": "Person",
-            "description": "Any individual person not fitting other specific person types.",
+
+        # Fallback type definitions (military domain)
+        military_unit_fallback = {
+            "name": "MilitaryUnit",
+            "description": "Any military unit or tactical grouping not fitting other specific types.",
             "attributes": [
-                {"name": "full_name", "type": "text", "description": "Full name of the person"},
-                {"name": "role", "type": "text", "description": "Role or occupation"}
+                {"name": "unit_designation", "type": "text", "description": "Official unit designation"},
+                {"name": "unit_size", "type": "text", "description": "Size category (squad, platoon, company, battalion, brigade)"},
+                {"name": "status", "type": "text", "description": "Operational status (combat-ready, degraded, combat-ineffective)"}
             ],
-            "examples": ["ordinary citizen", "anonymous netizen"]
+            "examples": ["3rd Brigade Combat Team", "Alpha Company", "Task Force Iron"]
         }
-        
+
         organization_fallback = {
             "name": "Organization",
-            "description": "Any organization not fitting other specific organization types.",
+            "description": "Any non-military organization (NGO, civilian agency, allied coalition).",
             "attributes": [
-                {"name": "org_name", "type": "text", "description": "Name of the organization"},
-                {"name": "org_type", "type": "text", "description": "Type of organization"}
+                {"name": "org_type", "type": "text", "description": "Type of organization (NGO, UN agency, civilian authority)"},
+                {"name": "role", "type": "text", "description": "Role in the operational area"}
             ],
-            "examples": ["small business", "community group"]
+            "examples": ["UNHCR", "Red Cross", "District Government"]
         }
-        
-        # 检查是否已有兜底类型
+
         entity_names = {e["name"] for e in result["entity_types"]}
-        has_person = "Person" in entity_names
+        has_military_unit = "MilitaryUnit" in entity_names
         has_organization = "Organization" in entity_names
-        
-        # 需要添加的兜底类型
+
         fallbacks_to_add = []
-        if not has_person:
-            fallbacks_to_add.append(person_fallback)
+        if not has_military_unit:
+            fallbacks_to_add.append(military_unit_fallback)
         if not has_organization:
             fallbacks_to_add.append(organization_fallback)
-        
+
         if fallbacks_to_add:
             current_count = len(result["entity_types"])
             needed_slots = len(fallbacks_to_add)
-            
-            # 如果添加后会超过 10 个，需要移除一些现有类型
+
             if current_count + needed_slots > MAX_ENTITY_TYPES:
-                # 计算需要移除多少个
                 to_remove = current_count + needed_slots - MAX_ENTITY_TYPES
-                # 从末尾移除（保留前面更重要的具体类型）
                 result["entity_types"] = result["entity_types"][:-to_remove]
-            
-            # 添加兜底类型
+
             result["entity_types"].extend(fallbacks_to_add)
-        
-        # 最终确保不超过限制（防御性编程）
+
         if len(result["entity_types"]) > MAX_ENTITY_TYPES:
             result["entity_types"] = result["entity_types"][:MAX_ENTITY_TYPES]
-        
+
         if len(result["edge_types"]) > MAX_EDGE_TYPES:
             result["edge_types"] = result["edge_types"][:MAX_EDGE_TYPES]
-        
+
         return result
     
     def generate_python_code(self, ontology: Dict[str, Any]) -> str:
@@ -356,12 +342,12 @@ class OntologyGenerator:
         """
         code_lines = [
             '"""',
-            '自定义实体类型定义',
-            '由MiroFish自动生成，用于社会舆论模拟',
+            'Custom entity type definitions',
+            'Auto-generated by MiroFish for tactical mission analysis',
             '"""',
             '',
-            'from pydantic import Field',
-            'from zep_cloud.external_clients.ontology import EntityModel, EntityText, EdgeModel',
+            'from typing import Optional',
+            'from pydantic import BaseModel, Field',
             '',
             '',
             '# ============== 实体类型定义 ==============',
@@ -373,7 +359,7 @@ class OntologyGenerator:
             name = entity["name"]
             desc = entity.get("description", f"A {name} entity.")
             
-            code_lines.append(f'class {name}(EntityModel):')
+            code_lines.append(f'class {name}(BaseModel):')
             code_lines.append(f'    """{desc}"""')
             
             attrs = entity.get("attributes", [])
@@ -381,7 +367,7 @@ class OntologyGenerator:
                 for attr in attrs:
                     attr_name = attr["name"]
                     attr_desc = attr.get("description", attr_name)
-                    code_lines.append(f'    {attr_name}: EntityText = Field(')
+                    code_lines.append(f'    {attr_name}: Optional[str] = Field(')
                     code_lines.append(f'        description="{attr_desc}",')
                     code_lines.append(f'        default=None')
                     code_lines.append(f'    )')
@@ -401,7 +387,7 @@ class OntologyGenerator:
             class_name = ''.join(word.capitalize() for word in name.split('_'))
             desc = edge.get("description", f"A {name} relationship.")
             
-            code_lines.append(f'class {class_name}(EdgeModel):')
+            code_lines.append(f'class {class_name}(BaseModel):')
             code_lines.append(f'    """{desc}"""')
             
             attrs = edge.get("attributes", [])
@@ -409,7 +395,7 @@ class OntologyGenerator:
                 for attr in attrs:
                     attr_name = attr["name"]
                     attr_desc = attr.get("description", attr_name)
-                    code_lines.append(f'    {attr_name}: EntityText = Field(')
+                    code_lines.append(f'    {attr_name}: Optional[str] = Field(')
                     code_lines.append(f'        description="{attr_desc}",')
                     code_lines.append(f'        default=None')
                     code_lines.append(f'    )')

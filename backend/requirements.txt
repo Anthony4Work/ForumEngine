@@ -13,15 +13,14 @@ flask-cors>=6.0.0
 # OpenAI SDK（统一使用 OpenAI 格式调用 LLM）
 openai>=1.0.0
 
-# ============= Zep Cloud =============
-zep-cloud==3.13.0
+# ============= Graphiti (Knowledge Graph) =============
+graphiti-core>=0.28.0
 
-# ============= OASIS 社交媒体模拟 =============
-# OASIS 社交模拟框架
-camel-oasis==0.2.5
-camel-ai==0.2.78
+# ============= Async support =============
+# For tactical deliberation engine async operations
+asyncio-compat>=0.1.0;python_version<"3.11"
 
-# ============= 文件处理 =============
+# ============= File processing =============
 PyMuPDF>=1.24.0
 # 编码检测（支持非UTF-8编码的文本文件）
 charset-normalizer>=3.0.0

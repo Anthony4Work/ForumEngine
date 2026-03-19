@@ -1,7 +1,7 @@
 """
-OASIS模拟管理器
-管理Twitter和Reddit双平台并行模拟
-使用预设脚本 + LLM智能生成配置参数
+Tactical Deliberation Manager
+Manages MDMP-based tactical deliberation using knowledge graph entities
+and AI staff officer agents.
 """
 
 import os
@@ -15,89 +15,83 @@ from enum import Enum
 from ..config import Config
 from ..utils.logger import get_logger
 from .zep_entity_reader import ZepEntityReader, FilteredEntities
-from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
-from .simulation_config_generator import SimulationConfigGenerator, SimulationParameters
+from .tactical_agent_generator import TacticalAgentGenerator, TacticalAgentProfile
+from .deliberation_config_generator import DeliberationConfigGenerator, DeliberationParameters
 
 logger = get_logger('mirofish.simulation')
 
 
 class SimulationStatus(str, Enum):
-    """模拟状态"""
+    """Simulation status"""
     CREATED = "created"
     PREPARING = "preparing"
     READY = "ready"
     RUNNING = "running"
     PAUSED = "paused"
-    STOPPED = "stopped"      # 模拟被手动停止
-    COMPLETED = "completed"  # 模拟自然完成
+    STOPPED = "stopped"
+    COMPLETED = "completed"
     FAILED = "failed"
-
-
-class PlatformType(str, Enum):
-    """平台类型"""
-    TWITTER = "twitter"
-    REDDIT = "reddit"
 
 
 @dataclass
 class SimulationState:
-    """模拟状态"""
+    """Deliberation state"""
     simulation_id: str
     project_id: str
     graph_id: str
-    
-    # 平台启用状态
-    enable_twitter: bool = True
-    enable_reddit: bool = True
-    
-    # 状态
+
+    # Status
     status: SimulationStatus = SimulationStatus.CREATED
-    
-    # 准备阶段数据
+
+    # Preparation data
     entities_count: int = 0
     profiles_count: int = 0
     entity_types: List[str] = field(default_factory=list)
-    
-    # 配置生成信息
+
+    # Config generation
     config_generated: bool = False
     config_reasoning: str = ""
-    
-    # 运行时数据
+
+    # Phase tracking
+    current_phase: int = 0
+    current_phase_name: str = ""
+    total_phases: int = 7
     current_round: int = 0
-    twitter_status: str = "not_started"
-    reddit_status: str = "not_started"
-    
-    # 时间戳
+    coas_proposed: int = 0
+    deliberation_status: str = "not_started"
+
+    # Timestamps
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    
-    # 错误信息
+
+    # Error info
     error: Optional[str] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
-        """完整状态字典（内部使用）"""
+        """Full state dict (internal use)"""
         return {
             "simulation_id": self.simulation_id,
             "project_id": self.project_id,
             "graph_id": self.graph_id,
-            "enable_twitter": self.enable_twitter,
-            "enable_reddit": self.enable_reddit,
             "status": self.status.value,
             "entities_count": self.entities_count,
             "profiles_count": self.profiles_count,
             "entity_types": self.entity_types,
             "config_generated": self.config_generated,
             "config_reasoning": self.config_reasoning,
+            "current_phase": self.current_phase,
+            "current_phase_name": self.current_phase_name,
+            "total_phases": self.total_phases,
             "current_round": self.current_round,
-            "twitter_status": self.twitter_status,
-            "reddit_status": self.reddit_status,
+            "coas_proposed": self.coas_proposed,
+            "deliberation_status": self.deliberation_status,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "error": self.error,
         }
-    
+
     def to_simple_dict(self) -> Dict[str, Any]:
-        """简化状态字典（API返回使用）"""
+        """Simplified state dict (API response)"""
         return {
             "simulation_id": self.simulation_id,
             "project_id": self.project_id,
@@ -115,11 +109,11 @@ class SimulationManager:
     """
     模拟管理器
     
-    核心功能：
-    1. 从Zep图谱读取实体并过滤
-    2. 生成OASIS Agent Profile
-    3. 使用LLM智能生成模拟配置参数
-    4. 准备预设脚本所需的所有文件
+    Core functions:
+    1. Read entities from Zep graph
+    2. Generate tactical staff officer agent profiles
+    3. Generate deliberation configuration using LLM
+    4. Prepare all files for deliberation script
     """
     
     # 模拟数据存储目录
@@ -171,17 +165,18 @@ class SimulationManager:
             simulation_id=simulation_id,
             project_id=data.get("project_id", ""),
             graph_id=data.get("graph_id", ""),
-            enable_twitter=data.get("enable_twitter", True),
-            enable_reddit=data.get("enable_reddit", True),
             status=SimulationStatus(data.get("status", "created")),
             entities_count=data.get("entities_count", 0),
             profiles_count=data.get("profiles_count", 0),
             entity_types=data.get("entity_types", []),
             config_generated=data.get("config_generated", False),
             config_reasoning=data.get("config_reasoning", ""),
+            current_phase=data.get("current_phase", 0),
+            current_phase_name=data.get("current_phase_name", ""),
+            total_phases=data.get("total_phases", 7),
             current_round=data.get("current_round", 0),
-            twitter_status=data.get("twitter_status", "not_started"),
-            reddit_status=data.get("reddit_status", "not_started"),
+            coas_proposed=data.get("coas_proposed", 0),
+            deliberation_status=data.get("deliberation_status", "not_started"),
             created_at=data.get("created_at", datetime.now().isoformat()),
             updated_at=data.get("updated_at", datetime.now().isoformat()),
             error=data.get("error"),
@@ -194,36 +189,31 @@ class SimulationManager:
         self,
         project_id: str,
         graph_id: str,
-        enable_twitter: bool = True,
-        enable_reddit: bool = True,
+        **kwargs,
     ) -> SimulationState:
         """
-        创建新的模拟
-        
+        Create a new deliberation.
+
         Args:
-            project_id: 项目ID
-            graph_id: Zep图谱ID
-            enable_twitter: 是否启用Twitter模拟
-            enable_reddit: 是否启用Reddit模拟
-            
+            project_id: Project ID
+            graph_id: Zep graph ID
+
         Returns:
             SimulationState
         """
         import uuid
         simulation_id = f"sim_{uuid.uuid4().hex[:12]}"
-        
+
         state = SimulationState(
             simulation_id=simulation_id,
             project_id=project_id,
             graph_id=graph_id,
-            enable_twitter=enable_twitter,
-            enable_reddit=enable_reddit,
             status=SimulationStatus.CREATED,
         )
-        
+
         self._save_simulation_state(state)
-        logger.info(f"创建模拟: {simulation_id}, project={project_id}, graph={graph_id}")
-        
+        logger.info(f"Created deliberation: {simulation_id}, project={project_id}, graph={graph_id}")
+
         return state
     
     def prepare_simulation(
@@ -237,14 +227,13 @@ class SimulationManager:
         parallel_profile_count: int = 3
     ) -> SimulationState:
         """
-        准备模拟环境（全程自动化）
-        
-        步骤：
-        1. 从Zep图谱读取并过滤实体
-        2. 为每个实体生成OASIS Agent Profile（可选LLM增强，支持并行）
-        3. 使用LLM智能生成模拟配置参数（时间、活跃度、发言频率等）
-        4. 保存配置文件和Profile文件
-        5. 复制预设脚本到模拟目录
+        Prepare deliberation environment (fully automated).
+
+        Steps:
+        1. Read and filter entities from Zep graph
+        2. Generate tactical staff officer agent profiles
+        3. Generate deliberation configuration (phases, criteria, mission config)
+        4. Save config and agent files
         
         Args:
             simulation_id: 模拟ID
@@ -300,131 +289,90 @@ class SimulationManager:
                 self._save_simulation_state(state)
                 return state
             
-            # ========== 阶段2: 生成Agent Profile ==========
-            total_entities = len(filtered.entities)
-            
+            # ========== Stage 2: Generate Tactical Staff Agents ==========
             if progress_callback:
                 progress_callback(
-                    "generating_profiles", 0, 
-                    "开始生成...",
+                    "generating_profiles", 0,
+                    "Generating tactical staff agents...",
                     current=0,
-                    total=total_entities
+                    total=10
                 )
-            
-            # 传入graph_id以启用Zep检索功能，获取更丰富的上下文
-            generator = OasisProfileGenerator(graph_id=state.graph_id)
-            
-            def profile_progress(current, total, msg):
+
+            agent_generator = TacticalAgentGenerator()
+
+            def agent_progress(pct, msg):
                 if progress_callback:
                     progress_callback(
-                        "generating_profiles", 
-                        int(current / total * 100), 
+                        "generating_profiles",
+                        pct,
                         msg,
-                        current=current,
-                        total=total,
+                        current=int(pct / 10),
+                        total=10,
                         item_name=msg
                     )
-            
-            # 设置实时保存的文件路径（优先使用 Reddit JSON 格式）
-            realtime_output_path = None
-            realtime_platform = "reddit"
-            if state.enable_reddit:
-                realtime_output_path = os.path.join(sim_dir, "reddit_profiles.json")
-                realtime_platform = "reddit"
-            elif state.enable_twitter:
-                realtime_output_path = os.path.join(sim_dir, "twitter_profiles.csv")
-                realtime_platform = "twitter"
-            
-            profiles = generator.generate_profiles_from_entities(
-                entities=filtered.entities,
+
+            agents = agent_generator.generate_all_agents(
+                graph_id=state.graph_id,
+                mission_context=simulation_requirement,
                 use_llm=use_llm_for_profiles,
-                progress_callback=profile_progress,
-                graph_id=state.graph_id,  # 传入graph_id用于Zep检索
-                parallel_count=parallel_profile_count,  # 并行生成数量
-                realtime_output_path=realtime_output_path,  # 实时保存路径
-                output_platform=realtime_platform  # 输出格式
+                entity_types=defined_entity_types,
+                progress_callback=agent_progress,
             )
-            
-            state.profiles_count = len(profiles)
-            
-            # 保存Profile文件（注意：Twitter使用CSV格式，Reddit使用JSON格式）
-            # Reddit 已经在生成过程中实时保存了，这里再保存一次确保完整性
+
+            state.profiles_count = len(agents)
+
+            # Save agents to JSON
+            agents_path = os.path.join(sim_dir, "agents.json")
+            TacticalAgentGenerator.save_agents_json(agents, agents_path)
+
             if progress_callback:
                 progress_callback(
-                    "generating_profiles", 95, 
-                    "保存Profile文件...",
-                    current=total_entities,
-                    total=total_entities
+                    "generating_profiles", 100,
+                    f"Generated {len(agents)} tactical staff agents",
+                    current=len(agents),
+                    total=len(agents)
                 )
             
-            if state.enable_reddit:
-                generator.save_profiles(
-                    profiles=profiles,
-                    file_path=os.path.join(sim_dir, "reddit_profiles.json"),
-                    platform="reddit"
-                )
-            
-            if state.enable_twitter:
-                # Twitter使用CSV格式！这是OASIS的要求
-                generator.save_profiles(
-                    profiles=profiles,
-                    file_path=os.path.join(sim_dir, "twitter_profiles.csv"),
-                    platform="twitter"
-                )
-            
+            # ========== Stage 3: Generate Deliberation Configuration ==========
             if progress_callback:
                 progress_callback(
-                    "generating_profiles", 100, 
-                    f"完成，共 {len(profiles)} 个Profile",
-                    current=len(profiles),
-                    total=len(profiles)
-                )
-            
-            # ========== 阶段3: LLM智能生成模拟配置 ==========
-            if progress_callback:
-                progress_callback(
-                    "generating_config", 0, 
-                    "正在分析模拟需求...",
+                    "generating_config", 0,
+                    "Analyzing mission requirements...",
                     current=0,
                     total=3
                 )
-            
-            config_generator = SimulationConfigGenerator()
-            
-            if progress_callback:
-                progress_callback(
-                    "generating_config", 30, 
-                    "正在调用LLM生成配置...",
-                    current=1,
-                    total=3
-                )
-            
-            sim_params = config_generator.generate_config(
+
+            config_generator = DeliberationConfigGenerator()
+
+            def config_progress(pct, msg):
+                if progress_callback:
+                    progress_callback(
+                        "generating_config",
+                        pct,
+                        msg,
+                        current=max(1, pct // 33),
+                        total=3
+                    )
+
+            delib_params = config_generator.generate_full_config(
                 simulation_id=simulation_id,
                 project_id=state.project_id,
                 graph_id=state.graph_id,
-                simulation_requirement=simulation_requirement,
                 document_text=document_text,
-                entities=filtered.entities,
-                enable_twitter=state.enable_twitter,
-                enable_reddit=state.enable_reddit
+                analysis_requirement=simulation_requirement,
+                progress_callback=config_progress,
             )
-            
-            if progress_callback:
-                progress_callback(
-                    "generating_config", 70, 
-                    "正在保存配置文件...",
-                    current=2,
-                    total=3
-                )
-            
-            # 保存配置文件
-            config_path = os.path.join(sim_dir, "simulation_config.json")
-            with open(config_path, 'w', encoding='utf-8') as f:
-                f.write(sim_params.to_json())
-            
+
+            # Save config
+            config_path = os.path.join(sim_dir, "deliberation_config.json")
+            DeliberationConfigGenerator.save_config(delib_params, config_path)
+
+            # Also save as simulation_config.json for backward compatibility
+            compat_path = os.path.join(sim_dir, "simulation_config.json")
+            DeliberationConfigGenerator.save_config(delib_params, compat_path)
+
             state.config_generated = True
-            state.config_reasoning = sim_params.generation_reasoning
+            state.config_reasoning = f"Mission type: {delib_params.mission_config.mission_type}, Urgency: {delib_params.mission_config.urgency}"
             
             if progress_callback:
                 progress_callback(
@@ -477,20 +425,28 @@ class SimulationManager:
         
         return simulations
     
-    def get_profiles(self, simulation_id: str, platform: str = "reddit") -> List[Dict[str, Any]]:
-        """获取模拟的Agent Profile"""
+    def get_profiles(self, simulation_id: str, platform: str = "tactical") -> List[Dict[str, Any]]:
+        """Get tactical agent profiles."""
         state = self._load_simulation_state(simulation_id)
         if not state:
-            raise ValueError(f"模拟不存在: {simulation_id}")
-        
+            raise ValueError(f"Simulation not found: {simulation_id}")
+
         sim_dir = self._get_simulation_dir(simulation_id)
-        profile_path = os.path.join(sim_dir, f"{platform}_profiles.json")
-        
-        if not os.path.exists(profile_path):
-            return []
-        
-        with open(profile_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+
+        # Try new agents.json first, fall back to legacy formats
+        agents_path = os.path.join(sim_dir, "agents.json")
+        if os.path.exists(agents_path):
+            with open(agents_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get("agents", [])
+
+        # Legacy fallback
+        legacy_path = os.path.join(sim_dir, f"{platform}_profiles.json")
+        if os.path.exists(legacy_path):
+            with open(legacy_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+
+        return []
     
     def get_simulation_config(self, simulation_id: str) -> Optional[Dict[str, Any]]:
         """获取模拟配置"""
@@ -504,25 +460,25 @@ class SimulationManager:
             return json.load(f)
     
     def get_run_instructions(self, simulation_id: str) -> Dict[str, str]:
-        """获取运行说明"""
+        """Get run instructions for the deliberation."""
         sim_dir = self._get_simulation_dir(simulation_id)
-        config_path = os.path.join(sim_dir, "simulation_config.json")
+        config_path = os.path.join(sim_dir, "deliberation_config.json")
         scripts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../scripts'))
-        
+        graph_id = ""
+        state = self._load_simulation_state(simulation_id)
+        if state:
+            graph_id = state.graph_id
+
         return {
             "simulation_dir": sim_dir,
             "scripts_dir": scripts_dir,
             "config_file": config_path,
             "commands": {
-                "twitter": f"python {scripts_dir}/run_twitter_simulation.py --config {config_path}",
-                "reddit": f"python {scripts_dir}/run_reddit_simulation.py --config {config_path}",
-                "parallel": f"python {scripts_dir}/run_parallel_simulation.py --config {config_path}",
+                "deliberation": f"python {scripts_dir}/run_tactical_deliberation.py --simulation-dir {sim_dir} --graph-id {graph_id}",
             },
             "instructions": (
-                f"1. 激活conda环境: conda activate MiroFish\n"
-                f"2. 运行模拟 (脚本位于 {scripts_dir}):\n"
-                f"   - 单独运行Twitter: python {scripts_dir}/run_twitter_simulation.py --config {config_path}\n"
-                f"   - 单独运行Reddit: python {scripts_dir}/run_reddit_simulation.py --config {config_path}\n"
-                f"   - 并行运行双平台: python {scripts_dir}/run_parallel_simulation.py --config {config_path}"
+                f"1. Activate environment: conda activate MiroFish\n"
+                f"2. Run deliberation:\n"
+                f"   python {scripts_dir}/run_tactical_deliberation.py --simulation-dir {sim_dir} --graph-id {graph_id}"
             )
         }

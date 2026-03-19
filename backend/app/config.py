@@ -32,8 +32,15 @@ class Config:
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
     
-    # Zep配置
-    ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+    # Embedding配置
+    EMBEDDING_API_KEY = os.environ.get('EMBEDDING_API_KEY', os.environ.get('LLM_API_KEY'))
+    EMBEDDING_BASE_URL = os.environ.get('EMBEDDING_URL', 'https://api.openai.com/v1')
+    EMBEDDING_MODEL = os.environ.get('EMBEDDING_MODEL', 'text-embedding-3-small')
+
+    # Neo4j / Graphiti配置
+    NEO4J_URI = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')
+    NEO4J_USER = os.environ.get('NEO4J_USER', 'neo4j')
+    NEO4J_PASSWORD = os.environ.get('NEO4J_PASSWORD', 'neo4j-password')
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
@@ -44,19 +51,11 @@ class Config:
     DEFAULT_CHUNK_SIZE = 500  # 默认切块大小
     DEFAULT_CHUNK_OVERLAP = 50  # 默认重叠大小
     
-    # OASIS模拟配置
-    OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))
-    OASIS_SIMULATION_DATA_DIR = os.path.join(os.path.dirname(__file__), '../uploads/simulations')
-    
-    # OASIS平台可用动作配置
-    OASIS_TWITTER_ACTIONS = [
-        'CREATE_POST', 'LIKE_POST', 'REPOST', 'FOLLOW', 'DO_NOTHING', 'QUOTE_POST'
-    ]
-    OASIS_REDDIT_ACTIONS = [
-        'LIKE_POST', 'DISLIKE_POST', 'CREATE_POST', 'CREATE_COMMENT',
-        'LIKE_COMMENT', 'DISLIKE_COMMENT', 'SEARCH_POSTS', 'SEARCH_USER',
-        'TREND', 'REFRESH', 'DO_NOTHING', 'FOLLOW', 'MUTE'
-    ]
+    # Deliberation configuration
+    DELIBERATION_DEFAULT_MAX_ROUNDS = int(os.environ.get('DELIBERATION_DEFAULT_MAX_ROUNDS', '25'))
+    SIMULATION_DATA_DIR = os.path.join(os.path.dirname(__file__), '../uploads/simulations')
+    # Backward compat alias
+    OASIS_SIMULATION_DATA_DIR = SIMULATION_DATA_DIR
     
     # Report Agent配置
     REPORT_AGENT_MAX_TOOL_CALLS = int(os.environ.get('REPORT_AGENT_MAX_TOOL_CALLS', '5'))
@@ -69,7 +68,7 @@ class Config:
         errors = []
         if not cls.LLM_API_KEY:
             errors.append("LLM_API_KEY 未配置")
-        if not cls.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY 未配置")
+        if not cls.NEO4J_URI:
+            errors.append("NEO4J_URI 未配置")
         return errors
 

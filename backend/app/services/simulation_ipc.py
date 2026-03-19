@@ -1,11 +1,11 @@
 """
-模拟IPC通信模块
-用于Flask后端和模拟脚本之间的进程间通信
+Simulation IPC Module
+Inter-process communication between Flask backend and deliberation subprocess.
 
-通过文件系统实现简单的命令/响应模式：
-1. Flask写入命令到 commands/ 目录
-2. 模拟脚本轮询命令目录，执行命令并写入响应到 responses/ 目录
-3. Flask轮询响应目录获取结果
+File-based command/response pattern:
+1. Flask writes commands to commands/ directory
+2. Deliberation script polls command directory, executes commands, writes responses to responses/
+3. Flask polls responses directory for results
 """
 
 import os
@@ -23,10 +23,12 @@ logger = get_logger('mirofish.simulation_ipc')
 
 
 class CommandType(str, Enum):
-    """命令类型"""
-    INTERVIEW = "interview"           # 单个Agent采访
-    BATCH_INTERVIEW = "batch_interview"  # 批量采访
-    CLOSE_ENV = "close_env"           # 关闭环境
+    """Command types"""
+    INTERVIEW = "interview"              # Single agent interview
+    BATCH_INTERVIEW = "batch_interview"  # Batch interview
+    CLOSE_ENV = "close_env"              # Close environment
+    INJECT_INTEL = "inject_intel"        # Inject new intelligence mid-deliberation
+    REDIRECT_PHASE = "redirect_phase"    # Force phase change
 
 
 class CommandStatus(str, Enum):
@@ -252,21 +254,62 @@ class SimulationIPCClient:
         )
     
     def send_close_env(self, timeout: float = 30.0) -> IPCResponse:
-        """
-        发送关闭环境命令
-        
-        Args:
-            timeout: 超时时间
-            
-        Returns:
-            IPCResponse
-        """
+        """Send close environment command."""
         return self.send_command(
             command_type=CommandType.CLOSE_ENV,
             args={},
             timeout=timeout
         )
-    
+
+    def send_inject_intel(
+        self,
+        intel_text: str,
+        source: str = "human",
+        priority: str = "high",
+        timeout: float = 30.0
+    ) -> IPCResponse:
+        """
+        Inject new intelligence into the deliberation mid-session.
+
+        Args:
+            intel_text: Intelligence text to inject
+            source: Source of the intel (human, sigint, humint, etc.)
+            priority: Priority level (low, medium, high, critical)
+            timeout: Timeout in seconds
+        """
+        return self.send_command(
+            command_type=CommandType.INJECT_INTEL,
+            args={
+                "intel_text": intel_text,
+                "source": source,
+                "priority": priority,
+            },
+            timeout=timeout
+        )
+
+    def send_redirect_phase(
+        self,
+        target_phase: int,
+        reason: str = "",
+        timeout: float = 30.0
+    ) -> IPCResponse:
+        """
+        Force the deliberation to jump to a specific phase.
+
+        Args:
+            target_phase: Target phase number (1-7)
+            reason: Reason for the redirect
+            timeout: Timeout in seconds
+        """
+        return self.send_command(
+            command_type=CommandType.REDIRECT_PHASE,
+            args={
+                "target_phase": target_phase,
+                "reason": reason,
+            },
+            timeout=timeout
+        )
+
     def check_env_alive(self) -> bool:
         """
         检查模拟环境是否存活

@@ -1,152 +1,204 @@
 """
-动作日志记录器
-用于记录OASIS模拟中每个Agent的动作，供后端监控使用
+Tactical Deliberation Action Logger
+Records each staff officer's actions during MDMP deliberation for backend monitoring.
 
-日志结构:
+Log structure:
     sim_xxx/
-    ├── twitter/
-    │   └── actions.jsonl    # Twitter 平台动作日志
-    ├── reddit/
-    │   └── actions.jsonl    # Reddit 平台动作日志
-    ├── simulation.log       # 主模拟进程日志
-    └── run_state.json       # 运行状态（API 查询用）
+    ├── deliberation/
+    │   ├── actions.jsonl    # Deliberation action log
+    │   ├── results.json     # Final deliberation results
+    │   └── coa_matrix.json  # COA comparison matrix
+    ├── simulation.log       # Main process log
+    └── run_state.json       # Run state (for API queries)
 """
 
 import json
 import os
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 
-class PlatformActionLogger:
-    """单平台动作日志记录器"""
-    
-    def __init__(self, platform: str, base_dir: str):
+class DeliberationActionLogger:
+    """Tactical deliberation action logger"""
+
+    def __init__(self, base_dir: str):
         """
-        初始化日志记录器
-        
+        Initialize logger.
+
         Args:
-            platform: 平台名称 (twitter/reddit)
-            base_dir: 模拟目录的基础路径
+            base_dir: Simulation directory base path
         """
-        self.platform = platform
         self.base_dir = base_dir
-        self.log_dir = os.path.join(base_dir, platform)
+        self.log_dir = os.path.join(base_dir, "deliberation")
         self.log_path = os.path.join(self.log_dir, "actions.jsonl")
         self._ensure_dir()
-    
+
     def _ensure_dir(self):
-        """确保目录存在"""
         os.makedirs(self.log_dir, exist_ok=True)
-    
+
     def log_action(
         self,
+        phase: int,
+        phase_name: str,
         round_num: int,
         agent_id: int,
         agent_name: str,
+        agent_role: str,
         action_type: str,
-        action_args: Optional[Dict[str, Any]] = None,
-        result: Optional[str] = None,
-        success: bool = True
+        content: str = "",
+        references: Optional[List[str]] = None,
+        confidence: float = 0.0,
+        risk_assessment: str = "",
+        success: bool = True,
     ):
-        """记录一个动作"""
+        """Record a deliberation action"""
         entry = {
+            "phase": phase,
+            "phase_name": phase_name,
             "round": round_num,
             "timestamp": datetime.now().isoformat(),
             "agent_id": agent_id,
             "agent_name": agent_name,
+            "agent_role": agent_role,
             "action_type": action_type,
-            "action_args": action_args or {},
-            "result": result,
+            "content": content,
+            "references": references or [],
+            "confidence": confidence,
+            "risk_assessment": risk_assessment,
             "success": success,
         }
-        
+
         with open(self.log_path, 'a', encoding='utf-8') as f:
             f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-    
-    def log_round_start(self, round_num: int, simulated_hour: int):
-        """记录轮次开始"""
+
+    def log_phase_start(self, phase: int, phase_name: str, active_roles: Optional[List[str]] = None):
+        """Record phase start"""
         entry = {
-            "round": round_num,
             "timestamp": datetime.now().isoformat(),
-            "event_type": "round_start",
-            "simulated_hour": simulated_hour,
+            "event_type": "phase_start",
+            "phase": phase,
+            "phase_name": phase_name,
+            "active_roles": active_roles or [],
         }
-        
+
         with open(self.log_path, 'a', encoding='utf-8') as f:
             f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-    
-    def log_round_end(self, round_num: int, actions_count: int):
-        """记录轮次结束"""
+
+    def log_phase_end(self, phase: int, phase_name: str, rounds_completed: int, actions_count: int):
+        """Record phase end"""
         entry = {
-            "round": round_num,
             "timestamp": datetime.now().isoformat(),
-            "event_type": "round_end",
+            "event_type": "phase_end",
+            "phase": phase,
+            "phase_name": phase_name,
+            "rounds_completed": rounds_completed,
             "actions_count": actions_count,
         }
-        
+
         with open(self.log_path, 'a', encoding='utf-8') as f:
             f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-    
-    def log_simulation_start(self, config: Dict[str, Any]):
-        """记录模拟开始"""
+
+    def log_round_start(self, phase: int, round_num: int):
+        """Record round start within a phase"""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "event_type": "round_start",
+            "phase": phase,
+            "round": round_num,
+        }
+
+        with open(self.log_path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+
+    def log_round_end(self, phase: int, round_num: int, actions_count: int):
+        """Record round end within a phase"""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "event_type": "round_end",
+            "phase": phase,
+            "round": round_num,
+            "actions_count": actions_count,
+        }
+
+        with open(self.log_path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+
+    def log_coa_proposed(self, coa_id: str, coa_name: str, proposer_role: str, coa_count: int):
+        """Record a new COA proposal"""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "event_type": "coa_proposed",
+            "coa_id": coa_id,
+            "coa_name": coa_name,
+            "proposer_role": proposer_role,
+            "coa_count": coa_count,
+        }
+
+        with open(self.log_path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+
+    def log_coa_selected(self, selected_coa: str, rationale: str = ""):
+        """Record COA selection by commander"""
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "event_type": "coa_selected",
+            "selected_coa": selected_coa,
+            "rationale": rationale,
+        }
+
+        with open(self.log_path, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+
+    def log_deliberation_start(self, config: Dict[str, Any]):
+        """Record deliberation start"""
+        phases = config.get("phases", [])
         entry = {
             "timestamp": datetime.now().isoformat(),
             "event_type": "simulation_start",
-            "platform": self.platform,
-            "total_rounds": config.get("time_config", {}).get("total_simulation_hours", 72) * 2,
-            "agents_count": len(config.get("agent_configs", [])),
+            "total_phases": len(phases),
+            "total_rounds": sum(p.get("max_rounds", 3) for p in phases),
+            "mission_type": config.get("mission_config", {}).get("mission_type", ""),
         }
-        
+
         with open(self.log_path, 'a', encoding='utf-8') as f:
             f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-    
-    def log_simulation_end(self, total_rounds: int, total_actions: int):
-        """记录模拟结束"""
+
+    def log_deliberation_end(self, total_phases: int, total_actions: int, selected_coa: str = ""):
+        """Record deliberation end"""
         entry = {
             "timestamp": datetime.now().isoformat(),
-            "event_type": "simulation_end",
-            "platform": self.platform,
-            "total_rounds": total_rounds,
+            "event_type": "deliberation_end",
+            "total_phases": total_phases,
             "total_actions": total_actions,
+            "selected_coa": selected_coa,
         }
-        
+
         with open(self.log_path, 'a', encoding='utf-8') as f:
             f.write(json.dumps(entry, ensure_ascii=False) + '\n')
 
 
 class SimulationLogManager:
     """
-    模拟日志管理器
-    统一管理所有日志文件，按平台分离
+    Simulation log manager.
+    Manages all log files for a deliberation session.
     """
-    
+
     def __init__(self, simulation_dir: str):
-        """
-        初始化日志管理器
-        
-        Args:
-            simulation_dir: 模拟目录路径
-        """
         self.simulation_dir = simulation_dir
-        self.twitter_logger: Optional[PlatformActionLogger] = None
-        self.reddit_logger: Optional[PlatformActionLogger] = None
+        self.deliberation_logger: Optional[DeliberationActionLogger] = None
         self._main_logger: Optional[logging.Logger] = None
-        
-        # 设置主日志
+
         self._setup_main_logger()
-    
+
     def _setup_main_logger(self):
-        """设置主模拟日志"""
+        """Set up main simulation logger"""
         log_path = os.path.join(self.simulation_dir, "simulation.log")
-        
-        # 创建 logger
+
         self._main_logger = logging.getLogger(f"simulation.{os.path.basename(self.simulation_dir)}")
         self._main_logger.setLevel(logging.INFO)
         self._main_logger.handlers.clear()
-        
-        # 文件处理器
+
         file_handler = logging.FileHandler(log_path, encoding='utf-8', mode='w')
         file_handler.setLevel(logging.INFO)
         file_handler.setFormatter(logging.Formatter(
@@ -154,8 +206,7 @@ class SimulationLogManager:
             datefmt='%Y-%m-%d %H:%M:%S'
         ))
         self._main_logger.addHandler(file_handler)
-        
-        # 控制台处理器
+
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(logging.Formatter(
@@ -163,143 +214,104 @@ class SimulationLogManager:
             datefmt='%H:%M:%S'
         ))
         self._main_logger.addHandler(console_handler)
-        
+
         self._main_logger.propagate = False
-    
-    def get_twitter_logger(self) -> PlatformActionLogger:
-        """获取 Twitter 平台日志记录器"""
-        if self.twitter_logger is None:
-            self.twitter_logger = PlatformActionLogger("twitter", self.simulation_dir)
-        return self.twitter_logger
-    
-    def get_reddit_logger(self) -> PlatformActionLogger:
-        """获取 Reddit 平台日志记录器"""
-        if self.reddit_logger is None:
-            self.reddit_logger = PlatformActionLogger("reddit", self.simulation_dir)
-        return self.reddit_logger
-    
+
+    def get_deliberation_logger(self) -> DeliberationActionLogger:
+        """Get deliberation action logger"""
+        if self.deliberation_logger is None:
+            self.deliberation_logger = DeliberationActionLogger(self.simulation_dir)
+        return self.deliberation_logger
+
+    # Legacy compatibility
+    def get_twitter_logger(self):
+        """Legacy compat — returns deliberation logger"""
+        return self.get_deliberation_logger()
+
+    def get_reddit_logger(self):
+        """Legacy compat — returns deliberation logger"""
+        return self.get_deliberation_logger()
+
     def log(self, message: str, level: str = "info"):
-        """记录主日志"""
         if self._main_logger:
             getattr(self._main_logger, level.lower(), self._main_logger.info)(message)
-    
+
     def info(self, message: str):
         self.log(message, "info")
-    
+
     def warning(self, message: str):
         self.log(message, "warning")
-    
+
     def error(self, message: str):
         self.log(message, "error")
-    
+
     def debug(self, message: str):
         self.log(message, "debug")
 
 
-# ============ 兼容旧接口 ============
+# ============ Legacy interface compat ============
+
+class PlatformActionLogger:
+    """Legacy compatibility wrapper — redirects to DeliberationActionLogger."""
+
+    def __init__(self, platform: str, base_dir: str):
+        self.platform = platform
+        self._delegate = DeliberationActionLogger(base_dir)
+
+    def log_action(self, round_num: int, agent_id: int, agent_name: str,
+                   action_type: str, action_args: Optional[Dict[str, Any]] = None,
+                   result: Optional[str] = None, success: bool = True):
+        self._delegate.log_action(
+            phase=0, phase_name=self.platform, round_num=round_num,
+            agent_id=agent_id, agent_name=agent_name, agent_role="",
+            action_type=action_type, content=str(action_args) if action_args else "",
+            success=success,
+        )
+
+    def log_round_start(self, round_num: int, simulated_hour: int):
+        self._delegate.log_round_start(phase=0, round_num=round_num)
+
+    def log_round_end(self, round_num: int, actions_count: int):
+        self._delegate.log_round_end(phase=0, round_num=round_num, actions_count=actions_count)
+
+    def log_simulation_start(self, config: Dict[str, Any]):
+        self._delegate.log_deliberation_start(config)
+
+    def log_simulation_end(self, total_rounds: int, total_actions: int):
+        self._delegate.log_deliberation_end(total_phases=0, total_actions=total_actions)
+
 
 class ActionLogger:
-    """
-    动作日志记录器（兼容旧接口）
-    建议使用 SimulationLogManager 代替
-    """
-    
+    """Legacy action logger — redirects to DeliberationActionLogger."""
+
     def __init__(self, log_path: str):
         self.log_path = log_path
-        self._ensure_dir()
-    
-    def _ensure_dir(self):
-        log_dir = os.path.dirname(self.log_path)
-        if log_dir:
-            os.makedirs(log_dir, exist_ok=True)
-    
-    def log_action(
-        self,
-        round_num: int,
-        platform: str,
-        agent_id: int,
-        agent_name: str,
-        action_type: str,
-        action_args: Optional[Dict[str, Any]] = None,
-        result: Optional[str] = None,
-        success: bool = True
-    ):
-        entry = {
-            "round": round_num,
-            "timestamp": datetime.now().isoformat(),
-            "platform": platform,
-            "agent_id": agent_id,
-            "agent_name": agent_name,
-            "action_type": action_type,
-            "action_args": action_args or {},
-            "result": result,
-            "success": success,
-        }
-        
-        with open(self.log_path, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-    
-    def log_round_start(self, round_num: int, simulated_hour: int, platform: str):
-        entry = {
-            "round": round_num,
-            "timestamp": datetime.now().isoformat(),
-            "platform": platform,
-            "event_type": "round_start",
-            "simulated_hour": simulated_hour,
-        }
-        
-        with open(self.log_path, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-    
-    def log_round_end(self, round_num: int, actions_count: int, platform: str):
-        entry = {
-            "round": round_num,
-            "timestamp": datetime.now().isoformat(),
-            "platform": platform,
-            "event_type": "round_end",
-            "actions_count": actions_count,
-        }
-        
-        with open(self.log_path, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-    
-    def log_simulation_start(self, platform: str, config: Dict[str, Any]):
-        entry = {
-            "timestamp": datetime.now().isoformat(),
-            "platform": platform,
-            "event_type": "simulation_start",
-            "total_rounds": config.get("time_config", {}).get("total_simulation_hours", 72) * 2,
-            "agents_count": len(config.get("agent_configs", [])),
-        }
-        
-        with open(self.log_path, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-    
-    def log_simulation_end(self, platform: str, total_rounds: int, total_actions: int):
-        entry = {
-            "timestamp": datetime.now().isoformat(),
-            "platform": platform,
-            "event_type": "simulation_end",
-            "total_rounds": total_rounds,
-            "total_actions": total_actions,
-        }
-        
-        with open(self.log_path, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        base_dir = os.path.dirname(log_path) or "."
+        self._delegate = DeliberationActionLogger(base_dir)
+
+    def log_action(self, round_num: int, platform: str, agent_id: int,
+                   agent_name: str, action_type: str,
+                   action_args: Optional[Dict[str, Any]] = None,
+                   result: Optional[str] = None, success: bool = True):
+        self._delegate.log_action(
+            phase=0, phase_name=platform, round_num=round_num,
+            agent_id=agent_id, agent_name=agent_name, agent_role="",
+            action_type=action_type, content=str(action_args) if action_args else "",
+            success=success,
+        )
 
 
-# 全局日志实例（兼容旧接口）
 _global_logger: Optional[ActionLogger] = None
 
 
 def get_logger(log_path: Optional[str] = None) -> ActionLogger:
-    """获取全局日志实例（兼容旧接口）"""
+    """Get global logger instance (legacy compat)"""
     global _global_logger
-    
+
     if log_path:
         _global_logger = ActionLogger(log_path)
-    
+
     if _global_logger is None:
         _global_logger = ActionLogger("actions.jsonl")
-    
+
     return _global_logger
