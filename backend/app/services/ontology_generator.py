@@ -5,8 +5,12 @@ for tactical/military mission analysis and decision support.
 """
 
 import json
+import logging
 from typing import Dict, Any, List, Optional
+from ..config import Config
 from ..utils.llm_client import LLMClient
+
+logger = logging.getLogger(__name__)
 
 
 ONTOLOGY_SYSTEM_PROMPT = """You are an expert knowledge graph ontology designer specialized in military and tactical domains. Your task is to analyze the given document content and mission analysis requirement, and design entity types and relationship types suitable for **tactical decision support and mission analysis**.
@@ -199,11 +203,19 @@ class OntologyGenerator:
 
         result = self.llm_client.chat_json(
             messages=messages,
-            temperature=0.3,
+            temperature=Config().GRAPH_ONTOLOGY_TEMPERATURE,
             max_tokens=4096
         )
 
         result = self._validate_and_process(result)
+
+        # Generate dynamic role assignments based on ontology entity types
+        try:
+            from .tactical_agent_generator import STAFF_ROLES
+            role_assignments = self.generate_role_assignments(result, STAFF_ROLES)
+            result["role_assignments"] = role_assignments
+        except Exception as e:
+            logger.warning(f"Role assignment generation failed ({e}), will use defaults at runtime")
 
         return result
 
@@ -298,8 +310,9 @@ Based on the above content, design entity types and relationship types suitable 
                 edge["description"] = edge["description"][:97] + "..."
 
         # Zep API limits: max 10 custom entity types, max 10 custom edge types
-        MAX_ENTITY_TYPES = 10
-        MAX_EDGE_TYPES = 10
+        cfg = Config()
+        MAX_ENTITY_TYPES = cfg.GRAPH_MAX_ENTITY_TYPES
+        MAX_EDGE_TYPES = cfg.GRAPH_MAX_EDGE_TYPES
 
         # Fallback type definitions (military domain)
         military_unit_fallback = {
@@ -353,13 +366,13 @@ Based on the above content, design entity types and relationship types suitable 
     
     def generate_python_code(self, ontology: Dict[str, Any]) -> str:
         """
-        将本体定义转换为Python代码（类似ontology.py）
-        
+        Convert ontology definition to Python code (similar to ontology.py)
+
         Args:
-            ontology: 本体定义
-            
+            ontology: Ontology definition
+
         Returns:
-            Python代码字符串
+            Python code string
         """
         code_lines = [
             '"""',
@@ -371,11 +384,11 @@ Based on the above content, design entity types and relationship types suitable 
             'from pydantic import BaseModel, Field',
             '',
             '',
-            '# ============== 实体类型定义 ==============',
+            '# ============== Entity Type Definitions ==============',
             '',
         ]
         
-        # 生成实体类型
+        # Generate entity types
         for entity in ontology.get("entity_types", []):
             name = entity["name"]
             desc = entity.get("description", f"A {name} entity.")
@@ -398,13 +411,13 @@ Based on the above content, design entity types and relationship types suitable 
             code_lines.append('')
             code_lines.append('')
         
-        code_lines.append('# ============== 关系类型定义 ==============')
+        code_lines.append('# ============== Relationship Type Definitions ==============')
         code_lines.append('')
         
-        # 生成关系类型
+        # Generate relationship types
         for edge in ontology.get("edge_types", []):
             name = edge["name"]
-            # 转换为PascalCase类名
+            # Convert to PascalCase class name
             class_name = ''.join(word.capitalize() for word in name.split('_'))
             desc = edge.get("description", f"A {name} relationship.")
             
@@ -426,8 +439,8 @@ Based on the above content, design entity types and relationship types suitable 
             code_lines.append('')
             code_lines.append('')
         
-        # 生成类型字典
-        code_lines.append('# ============== 类型配置 ==============')
+        # Generate type dictionaries
+        code_lines.append('# ============== Type Configuration ==============')
         code_lines.append('')
         code_lines.append('ENTITY_TYPES = {')
         for entity in ontology.get("entity_types", []):
@@ -443,7 +456,7 @@ Based on the above content, design entity types and relationship types suitable 
         code_lines.append('}')
         code_lines.append('')
         
-        # 生成边的source_targets映射
+        # Generate edge source_targets mapping
         code_lines.append('EDGE_SOURCE_TARGETS = {')
         for edge in ontology.get("edge_types", []):
             name = edge["name"]
@@ -457,4 +470,230 @@ Based on the above content, design entity types and relationship types suitable 
         code_lines.append('}')
         
         return '\n'.join(code_lines)
+
+    def generate_role_assignments(
+        self,
+        ontology: Dict[str, Any],
+        staff_roles: List[Dict[str, Any]],
+    ) -> Dict[str, List[str]]:
+        """
+        Generate dynamic entity-type-to-role assignments using LLM.
+
+        Given the ontology's entity types and the staff roles, the LLM decides
+        which roles should see which entity types based on doctrinal expertise.
+
+        Args:
+            ontology: The generated ontology (must have 'entity_types').
+            staff_roles: STAFF_ROLES list from tactical_agent_generator.
+
+        Returns:
+            Dict mapping role_code → list of entity type names.
+            CDR and XO always get ["__ALL__"].
+        """
+        entity_types = ontology.get("entity_types", [])
+        if not entity_types:
+            logger.warning("No entity types in ontology — returning default assignments")
+            return {role["role_code"]: role["assigned_entity_types"] for role in staff_roles}
+
+        # Build entity type descriptions for the prompt
+        entity_lines = []
+        for i, et in enumerate(entity_types, 1):
+            desc = et.get("description", et["name"])
+            entity_lines.append(f"{i}. {et['name']} — {desc}")
+        entity_block = "\n".join(entity_lines)
+
+        # Build role descriptions for the prompt
+        role_lines = []
+        for role in staff_roles:
+            role_lines.append(
+                f"- {role['role_code']} ({role['role_name']}): {role['description']}"
+            )
+        role_block = "\n".join(role_lines)
+
+        all_type_names = [et["name"] for et in entity_types]
+
+        system_prompt = """You are a military staff organization expert. Your task is to assign entity types from a knowledge graph to the staff officer roles best qualified to analyze them.
+
+**IMPORTANT: You must output valid JSON data only. Do not output anything else.**
+
+Output JSON with the following structure:
+```json
+{
+    "role_assignments": {
+        "ROLE_CODE": ["EntityType1", "EntityType2", ...],
+        ...
+    },
+    "reasoning": "Brief explanation of the assignment logic"
+}
+```"""
+
+        user_prompt = f"""## Entity Types (extracted from mission document)
+
+{entity_block}
+
+## Staff Officer Roles
+
+{role_block}
+
+## Assignment Rules
+
+1. CDR and XO ALWAYS get ["__ALL__"] — they have full battlespace awareness
+2. Every other entity type must be assigned to AT LEAST one specialist role (S2, S3, S4, S6, FSO, RED, CIMIC, or ENGR)
+3. An entity type CAN be assigned to multiple roles when doctrinally relevant
+4. Base assignments on each role's domain expertise:
+   - S2 (Intelligence): threats, enemy forces, terrain analysis, weather effects
+   - S3 (Operations): friendly units, objectives, maneuver routes, task organization
+   - S4 (Logistics): supply points, logistics assets, sustainment, medical
+   - S6 (Communications): comms assets, electronic warfare, C2 systems
+   - FSO (Fire Support): weapons, fire support assets, target locations, enemy positions
+   - RED (Red Team): enemy forces, threats, friendly vulnerabilities
+   - CIMIC (Civil Affairs): civilian entities, population, NGOs, cultural sites
+   - ENGR (Engineer): terrain, routes, obstacles, fortifications, threats (IEDs/mines)
+5. Use ONLY the entity type names listed above — do not invent new ones
+6. All 10 roles must appear in the output
+
+Available entity type names: {json.dumps(all_type_names)}
+
+Assign each entity type to the appropriate roles based on doctrinal expertise."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        try:
+            result = self.llm_client.chat_json(
+                messages=messages,
+                temperature=0.2,
+                max_tokens=2048,
+            )
+            assignments = result.get("role_assignments", {})
+            assignments = self._validate_role_assignments(assignments, all_type_names, staff_roles)
+            logger.info(f"LLM role assignments generated: {json.dumps(assignments, indent=2)}")
+            return assignments
+
+        except Exception as e:
+            logger.warning(f"LLM role assignment failed ({e}), using keyword fallback")
+            return _infer_role_assignments(entity_types)
+
+    def _validate_role_assignments(
+        self,
+        assignments: Dict[str, List[str]],
+        valid_type_names: List[str],
+        staff_roles: List[Dict[str, Any]],
+    ) -> Dict[str, List[str]]:
+        """Validate and fix LLM-generated role assignments."""
+        valid_set = set(valid_type_names)
+        role_codes = {role["role_code"] for role in staff_roles}
+
+        # Ensure CDR and XO always have __ALL__
+        assignments["CDR"] = ["__ALL__"]
+        assignments["XO"] = ["__ALL__"]
+
+        # Ensure all roles are present
+        for code in role_codes:
+            if code not in assignments:
+                assignments[code] = []
+
+        # Remove invalid entity type names from specialist roles
+        for code in list(assignments.keys()):
+            if code in ("CDR", "XO"):
+                continue
+            if code not in role_codes:
+                del assignments[code]
+                continue
+            assignments[code] = [t for t in assignments[code] if t in valid_set]
+
+        # Check every entity type is assigned to at least one specialist
+        assigned_types = set()
+        for code, types in assignments.items():
+            if code in ("CDR", "XO"):
+                continue
+            assigned_types.update(types)
+
+        unassigned = valid_set - assigned_types
+        if unassigned:
+            # Use keyword fallback for unassigned types only
+            entity_defs = [{"name": t, "description": t} for t in unassigned]
+            fallback = _infer_role_assignments(entity_defs)
+            for code, types in fallback.items():
+                if code in ("CDR", "XO"):
+                    continue
+                for t in types:
+                    if t in unassigned and t not in assignments.get(code, []):
+                        assignments.setdefault(code, []).append(t)
+
+        return assignments
+
+
+def _infer_role_assignments(entity_types: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """
+    Keyword-based fallback for role assignment when LLM is unavailable.
+
+    Maps entity types to staff roles based on domain keywords found in
+    the entity name and description.
+    """
+    # Keyword → roles mapping (order matters: more specific first)
+    KEYWORD_RULES = [
+        # Threats / enemy
+        (["threat", "enemy", "hostile", "ied", "minefield", "sniper", "air defense",
+          "adversary", "insurgent", "ambush", "mine"], ["S2", "RED", "ENGR"]),
+        # Terrain
+        (["terrain", "river", "mountain", "ridge", "forest", "urban", "hill",
+          "valley", "pass", "elevation", "bridge", "obstacle"], ["S2", "ENGR"]),
+        # Civilian
+        (["civilian", "village", "refugee", "ngo", "population", "humanitarian",
+          "cultural", "market", "clinic", "school"], ["CIMIC"]),
+        # Military units
+        (["unit", "infantry", "armor", "artillery", "battalion", "brigade",
+          "platoon", "company", "regiment", "task force", "recon", "mechanized",
+          "special ops", "formation"], ["S3", "RED"]),
+        # Objectives
+        (["objective", "phase line", "checkpoint", "key terrain", "target",
+          "rally point", "assembly area"], ["S3"]),
+        # Routes
+        (["route", "road", "corridor", "msr", "asr", "lane", "axis",
+          "infiltration", "movement"], ["S3", "ENGR"]),
+        # Supply / logistics
+        (["supply", "logistics", "hospital", "ammo", "cache", "fob",
+          "sustainment", "maintenance", "medical", "fuel", "water point",
+          "lz", "landing zone"], ["S4"]),
+        # Assets / equipment
+        (["asset", "vehicle", "uav", "sensor", "weapon", "comms", "radar",
+          "isr", "drone", "antenna", "relay", "satellite", "electronic",
+          "signal", "c2", "network"], ["S6", "FSO"]),
+        # Locations
+        (["location", "position", "grid", "area", "airfield", "zone",
+          "sector", "region", "coordinate"], ["FSO", "CIMIC"]),
+        # Organizations
+        (["organization", "ngo", "agency", "coalition", "un ", "united nations",
+          "government", "authority"], ["CIMIC"]),
+    ]
+
+    assignments: Dict[str, List[str]] = {
+        "CDR": ["__ALL__"],
+        "XO": ["__ALL__"],
+        "S2": [], "S3": [], "S4": [], "S6": [],
+        "FSO": [], "RED": [], "CIMIC": [], "ENGR": [],
+    }
+
+    for et in entity_types:
+        name = et.get("name", "")
+        desc = et.get("description", "")
+        text = (name + " " + desc).lower()
+
+        matched_roles = set()
+        for keywords, roles in KEYWORD_RULES:
+            if any(kw in text for kw in keywords):
+                matched_roles.update(roles)
+
+        # If no match, assign to S3 (operations) as default specialist
+        if not matched_roles:
+            matched_roles.add("S3")
+
+        for role in matched_roles:
+            if name not in assignments[role]:
+                assignments[role].append(name)
+
+    return assignments
 

@@ -7,13 +7,14 @@ here are defined by doctrinal roles, not by graph entities.
 Graph entities become the DATA that agents reason about, not agents themselves.
 """
 
+import asyncio
 import json
 import random
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from ..config import Config
 from ..utils.graphiti_client import get_graphiti
 from ..utils.logger import get_logger
@@ -54,6 +55,7 @@ class TacticalAgentProfile:
     assigned_entity_uuids: List[str] = field(default_factory=list)
     assigned_entity_types: List[str] = field(default_factory=list)
     source_entity_type: Optional[str] = None
+    is_sme: bool = False
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def to_dict(self) -> Dict[str, Any]:
@@ -61,6 +63,44 @@ class TacticalAgentProfile:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'TacticalAgentProfile':
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class SMEAgentProfile:
+    """Profile for a Subject Matter Expert agent generated from a graph entity."""
+
+    agent_id: int                          # 100+ to avoid collision with staff 0-9
+    role_code: str                         # "SME_001", "SME_002", ...
+    role_name: str                         # "Local Village Elder", "NGO Field Director"
+    name: str
+    specialty: str
+    persona: str                           # ~2000 chars (enriched via Graphiti)
+    source_entity_uuid: str
+    source_entity_type: str
+    relevant_phases: List[int] = field(default_factory=list)
+    expertise_tags: List[str] = field(default_factory=list)
+    credibility: float = 0.7
+    is_sme: bool = True
+
+    # Minimal cognitive profile (SMEs don't use full military metrics)
+    risk_tolerance: float = 0.5
+    analytical_depth: float = 0.5
+    doctrinal_adherence: float = 0.0       # SMEs are non-doctrinal
+
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = asdict(self)
+        # Add fields expected by the deliberation engine
+        d["role_code"] = self.role_code
+        d["role_name"] = self.role_name
+        d["assigned_entity_uuids"] = [self.source_entity_uuid]
+        d["assigned_entity_types"] = [self.source_entity_type]
+        return d
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SMEAgentProfile':
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
@@ -219,7 +259,8 @@ STAFF_ROLES = [
 
 def assign_entities_to_agents(
     entities: List[EntityNode],
-    roles: List[dict] = None
+    roles: List[dict] = None,
+    role_assignments: Optional[Dict[str, List[str]]] = None,
 ) -> Dict[str, List[str]]:
     """
     Assign graph entities to staff officers based on entity type.
@@ -227,6 +268,10 @@ def assign_entities_to_agents(
     Args:
         entities: Filtered entities from the knowledge graph.
         roles: Staff role definitions (defaults to STAFF_ROLES).
+        role_assignments: Dynamic role→entity_type mapping from ontology
+            (e.g. {"S2": ["IEDThreat", "EnemyBattalion"], ...}).
+            When provided, overrides the hardcoded assigned_entity_types
+            in each role definition.
 
     Returns:
         Dict mapping role_code -> list of entity UUIDs.
@@ -241,7 +286,11 @@ def assign_entities_to_agents(
 
         assigned_to_any = False
         for role in roles:
-            role_types = role["assigned_entity_types"]
+            # Use dynamic assignments if available, otherwise fall back to hardcoded
+            if role_assignments:
+                role_types = role_assignments.get(role["role_code"], role["assigned_entity_types"])
+            else:
+                role_types = role["assigned_entity_types"]
 
             if "__ALL__" in role_types:
                 assignments[role["role_code"]].append(entity.uuid)
@@ -330,7 +379,12 @@ class TacticalAgentGenerator:
             api_key=config.LLM_API_KEY,
             base_url=config.LLM_BASE_URL,
         )
+        self.async_openai_client = AsyncOpenAI(
+            api_key=config.LLM_API_KEY,
+            base_url=config.LLM_BASE_URL,
+        )
         self.llm_model = config.LLM_MODEL_NAME
+        self.llm_max_concurrent = config.LLM_MAX_CONCURRENT
         self.entity_reader: Optional[EntityReader] = None
 
     def generate_all_agents(
@@ -340,6 +394,7 @@ class TacticalAgentGenerator:
         use_llm: bool = True,
         entity_types: Optional[List[str]] = None,
         progress_callback=None,
+        ontology: Optional[Dict[str, Any]] = None,
     ) -> List[TacticalAgentProfile]:
         """
         Generate all 10 tactical staff agents.
@@ -350,6 +405,8 @@ class TacticalAgentGenerator:
             use_llm: Whether to use LLM for persona generation (False = rule-based).
             entity_types: Optional filter for entity types to consider.
             progress_callback: Optional callback(progress_pct, message).
+            ontology: Optional ontology dict with role_assignments for dynamic
+                entity-to-role mapping.
 
         Returns:
             List of 10 TacticalAgentProfile instances.
@@ -365,11 +422,12 @@ class TacticalAgentGenerator:
         entities = filtered.entities if hasattr(filtered, 'entities') else filtered.get("entities", [])
         logger.info(f"Found {len(entities)} filtered entities in graph")
 
-        # Step 2: Assign entities to roles
+        # Step 2: Assign entities to roles (use dynamic assignments if available)
         if progress_callback:
             progress_callback(15, "Assigning entities to staff roles...")
 
-        assignments = assign_entities_to_agents(entities)
+        role_assignments = ontology.get("role_assignments") if ontology else None
+        assignments = assign_entities_to_agents(entities, role_assignments=role_assignments)
 
         # Build entity lookup for summaries
         entity_lookup = {e.uuid: e for e in entities}
@@ -494,6 +552,139 @@ class TacticalAgentGenerator:
             return None
 
     # ============================================================================
+    # T2.4b — Async LLM-based Persona Generation (parallel)
+    # ============================================================================
+
+    async def _generate_with_llm_async(
+        self,
+        role: dict,
+        mission_context: str,
+        entity_summaries: str,
+        assigned_uuids: List[str],
+        semaphore: asyncio.Semaphore,
+    ) -> Optional[TacticalAgentProfile]:
+        """Generate an agent profile using LLM (async version for parallel execution)."""
+        try:
+            user_msg = PERSONA_USER_TEMPLATE.format(
+                role_name=role["role_name"],
+                role_code=role["role_code"],
+                rank=role["rank"],
+                specialty=role["specialty"],
+                description=role["description"],
+                mission_context=mission_context[:3000],
+                entity_summaries=entity_summaries[:3000],
+            )
+
+            async with semaphore:
+                response = await self.async_openai_client.chat.completions.create(
+                    model=self.llm_model,
+                    messages=[
+                        {"role": "system", "content": PERSONA_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    temperature=0.7,
+                    max_tokens=2000,
+                )
+
+            content = response.choices[0].message.content.strip()
+
+            # Strip markdown code fences if present
+            if content.startswith("```"):
+                content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            if content.startswith("json"):
+                content = content[4:]
+
+            data = json.loads(content)
+
+            return TacticalAgentProfile(
+                agent_id=role["agent_id"],
+                role_code=role["role_code"],
+                role_name=role["role_name"],
+                name=data.get("name", f"{role['rank']} {role['role_name']}"),
+                rank=role["rank"],
+                specialty=role["specialty"],
+                persona=str(data.get("persona", "")).replace("\n", " "),
+                risk_tolerance=self._clamp(data.get("risk_tolerance", role["default_risk_tolerance"])),
+                analytical_depth=self._clamp(data.get("analytical_depth", role["default_analytical_depth"])),
+                doctrinal_adherence=self._clamp(data.get("doctrinal_adherence", role["default_doctrinal_adherence"])),
+                expertise_maneuver=self._clamp(data.get("expertise_maneuver", role["default_expertise"]["maneuver"])),
+                expertise_fires=self._clamp(data.get("expertise_fires", role["default_expertise"]["fires"])),
+                expertise_logistics=self._clamp(data.get("expertise_logistics", role["default_expertise"]["logistics"])),
+                expertise_intel=self._clamp(data.get("expertise_intel", role["default_expertise"]["intel"])),
+                expertise_comms=self._clamp(data.get("expertise_comms", role["default_expertise"]["comms"])),
+                assigned_entity_uuids=assigned_uuids,
+                assigned_entity_types=role["assigned_entity_types"],
+            )
+
+        except Exception as e:
+            logger.warning(f"Async LLM persona generation failed for {role['role_code']}: {e}")
+            return None
+
+    async def generate_all_agents_async(
+        self,
+        graph_id: str,
+        mission_context: str,
+        use_llm: bool = True,
+        entity_types: Optional[List[str]] = None,
+        progress_callback=None,
+        ontology: Optional[Dict[str, Any]] = None,
+    ) -> List[TacticalAgentProfile]:
+        """
+        Generate all 10 tactical staff agents in parallel.
+
+        Same interface as generate_all_agents() but uses asyncio.gather
+        to parallelize independent LLM calls, bounded by LLM_MAX_CONCURRENT.
+        """
+        logger.info(f"Generating tactical agents (async/parallel) for graph {graph_id}")
+
+        # Step 1: Read entities from graph (sync — fast, no LLM)
+        if progress_callback:
+            progress_callback(5, "Reading entities from knowledge graph...")
+
+        self.entity_reader = EntityReader()
+        filtered = self.entity_reader.filter_defined_entities(graph_id=graph_id)
+        entities = filtered.entities if hasattr(filtered, 'entities') else filtered.get("entities", [])
+        logger.info(f"Found {len(entities)} filtered entities in graph")
+
+        # Step 2: Assign entities to roles (use dynamic assignments if available)
+        if progress_callback:
+            progress_callback(15, "Assigning entities to staff roles...")
+
+        role_assignments = ontology.get("role_assignments") if ontology else None
+        assignments = assign_entities_to_agents(entities, role_assignments=role_assignments)
+        entity_lookup = {e.uuid: e for e in entities}
+
+        # Step 3: Generate agent profiles in parallel
+        if progress_callback:
+            progress_callback(20, "Generating all agent profiles in parallel...")
+
+        semaphore = asyncio.Semaphore(self.llm_max_concurrent)
+
+        async def _generate_one(role: dict) -> TacticalAgentProfile:
+            assigned_uuids = assignments.get(role["role_code"], [])
+            entity_summaries = self._build_entity_summaries(assigned_uuids, entity_lookup)
+
+            profile = None
+            if use_llm:
+                profile = await self._generate_with_llm_async(
+                    role, mission_context, entity_summaries, assigned_uuids, semaphore,
+                )
+            if profile is None:
+                profile = self._generate_rule_based(role, assigned_uuids)
+            return profile
+
+        agents = await asyncio.gather(*[_generate_one(role) for role in STAFF_ROLES])
+        agents = list(agents)
+
+        if progress_callback:
+            progress_callback(95, "Finalizing agent profiles...")
+
+        logger.info(f"Generated {len(agents)} tactical agents (parallel)")
+        return agents
+
+    # ============================================================================
     # T2.5 — Rule-based Fallback
     # ============================================================================
 
@@ -558,17 +749,31 @@ class TacticalAgentGenerator:
     # ============================================================================
 
     @staticmethod
-    def save_agents_json(agents: List[TacticalAgentProfile], output_path: str):
-        """Save agent profiles to a JSON file."""
+    def save_agents_json(agents, output_path: str):
+        """Save agent profiles (staff + SME) to a JSON file."""
+        agent_dicts = []
+        for a in agents:
+            if hasattr(a, 'to_dict'):
+                agent_dicts.append(a.to_dict())
+            elif isinstance(a, dict):
+                agent_dicts.append(a)
+            else:
+                agent_dicts.append(asdict(a))
+
+        staff_count = sum(1 for a in agent_dicts if not a.get("is_sme"))
+        sme_count = sum(1 for a in agent_dicts if a.get("is_sme"))
+
         data = {
-            "agents": [a.to_dict() for a in agents],
-            "total_agents": len(agents),
-            "generation_method": "tactical_staff",
+            "agents": agent_dicts,
+            "total_agents": len(agent_dicts),
+            "staff_count": staff_count,
+            "sme_count": sme_count,
+            "generation_method": "tactical_staff" if sme_count == 0 else "tactical_staff+sme",
             "created_at": datetime.now().isoformat(),
         }
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        logger.info(f"Saved {len(agents)} agents to {output_path}")
+        logger.info(f"Saved {staff_count} staff + {sme_count} SME agents to {output_path}")
 
     @staticmethod
     def load_agents_json(input_path: str) -> List[TacticalAgentProfile]:

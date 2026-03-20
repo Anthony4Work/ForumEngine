@@ -40,7 +40,7 @@ def _ensure_loop() -> asyncio.AbstractEventLoop:
     return _loop
 
 
-def run_async(coro: Coroutine, timeout: float | None = 120) -> Any:
+def run_async(coro: Coroutine, timeout: float | None = 600) -> Any:
     """Execute an async coroutine on the shared Graphiti event loop.
 
     Safe to call from any thread (main, Flask request, background workers).
@@ -65,6 +65,7 @@ def get_graphiti() -> Graphiti:
             api_key=Config.LLM_API_KEY,
             base_url=Config.LLM_BASE_URL,
             model=Config.LLM_MODEL_NAME,
+            small_model=Config.LLM_MODEL_NAME,
         )
         llm_client = OpenAIClient(config=llm_config)
 

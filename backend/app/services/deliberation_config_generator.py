@@ -70,6 +70,29 @@ class EvaluationCriterion:
 
 
 @dataclass
+class SMEConfig:
+    """Configuration for SME agent participation."""
+    enabled: bool = True
+    count: int = 5
+    volunteer_probability: float = 0.4
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class OASISFeedbackConfig:
+    """Configuration for OASIS social feedback loop."""
+    enabled: bool = False
+    rounds: int = 30
+    platform: str = "reddit"
+    run_phase_8: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class DeliberationParameters:
     """Complete deliberation configuration."""
     simulation_id: str = ""
@@ -80,6 +103,8 @@ class DeliberationParameters:
     evaluation_criteria: List[Dict[str, Any]] = field(default_factory=list)
     max_coas: int = 4
     wargame_depth: int = 3
+    sme_config: SMEConfig = field(default_factory=SMEConfig)
+    oasis_feedback: OASISFeedbackConfig = field(default_factory=OASISFeedbackConfig)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def to_dict(self) -> Dict[str, Any]:
@@ -227,6 +252,20 @@ class DeliberationConfigGenerator:
         max_coas = 3 if mission_config.urgency == "flash" else 4
         wargame_depth = 2 if mission_config.urgency in ("immediate", "flash") else 3
 
+        # SME and OASIS feedback config from environment
+        config = Config()
+        sme_cfg = SMEConfig(
+            enabled=config.SME_AGENT_ENABLED,
+            count=config.SME_AGENT_COUNT,
+            volunteer_probability=config.SME_VOLUNTEER_PROBABILITY,
+        )
+        oasis_cfg = OASISFeedbackConfig(
+            enabled=config.OASIS_FEEDBACK_ENABLED,
+            rounds=config.OASIS_FEEDBACK_ROUNDS,
+            platform=config.OASIS_FEEDBACK_PLATFORM,
+            run_phase_8=config.OASIS_FEEDBACK_RUN_PHASE_8,
+        )
+
         params = DeliberationParameters(
             simulation_id=simulation_id,
             project_id=project_id,
@@ -236,6 +275,8 @@ class DeliberationConfigGenerator:
             evaluation_criteria=criteria,
             max_coas=max_coas,
             wargame_depth=wargame_depth,
+            sme_config=sme_cfg,
+            oasis_feedback=oasis_cfg,
         )
 
         if progress_callback:

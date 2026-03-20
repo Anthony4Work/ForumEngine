@@ -19,9 +19,12 @@ from graphiti_core.graphiti import RawEpisode
 
 from ..config import Config
 from ..utils.graphiti_client import get_graphiti, run_async
+from ..utils.logger import get_logger
 from ..models.task import TaskManager, TaskStatus
 from ..utils.graph_paging import fetch_all_nodes, fetch_all_edges
 from .text_processor import TextProcessor
+
+logger = get_logger('mirofish.graph_builder')
 
 
 @dataclass
@@ -59,11 +62,19 @@ class GraphBuilderService:
         text: str,
         ontology: Dict[str, Any],
         graph_name: str = "MiroFish Graph",
-        chunk_size: int = 500,
-        chunk_overlap: int = 50,
-        batch_size: int = 3
+        chunk_size: int = None,
+        chunk_overlap: int = None,
+        batch_size: int = None
     ) -> str:
         """Start graph building in a background thread. Returns task_id."""
+        cfg = Config()
+        if chunk_size is None:
+            chunk_size = cfg.DEFAULT_CHUNK_SIZE
+        if chunk_overlap is None:
+            chunk_overlap = cfg.DEFAULT_CHUNK_OVERLAP
+        if batch_size is None:
+            batch_size = cfg.GRAPH_BUILD_BATCH_SIZE
+
         task_id = self.task_manager.create_task(
             task_type="graph_build",
             metadata={
@@ -153,21 +164,30 @@ class GraphBuilderService:
                     message=f"Processing batch {batch_num}/{total_batches} ({len(batch_chunks)} chunks)..."
                 )
 
-                for chunk in batch_chunks:
-                    await self.graphiti.add_episode(
-                        name=f"{graph_id}_chunk_{i}",
-                        episode_body=chunk,
-                        source=EpisodeType.text,
-                        source_description=f"Document chunk for graph {graph_id}",
-                        reference_time=datetime.now(timezone.utc),
-                        group_id=graph_id,
-                        entity_types=self._entity_types if self._entity_types else None,
-                        edge_types=self._edge_types if self._edge_types else None,
-                        edge_type_map=self._edge_type_map if self._edge_type_map else None,
-                    )
+                for j, chunk in enumerate(batch_chunks):
+                    chunk_idx = i + j + 1
+                    logger.info(f"[{task_id[:8]}] Processing chunk {chunk_idx}/{total_chunks} ({len(chunk)} chars)...")
+                    try:
+                        await self.graphiti.add_episode(
+                            name=f"{graph_id}_chunk_{chunk_idx}",
+                            episode_body=chunk,
+                            source=EpisodeType.text,
+                            source_description=f"Document chunk for graph {graph_id}",
+                            reference_time=datetime.now(timezone.utc),
+                            group_id=graph_id,
+                            entity_types=self._entity_types if self._entity_types else None,
+                            edge_types=self._edge_types if self._edge_types else None,
+                            edge_type_map=self._edge_type_map if self._edge_type_map else None,
+                        )
+                        logger.info(f"[{task_id[:8]}] Chunk {chunk_idx}/{total_chunks} done")
+                    except Exception as chunk_err:
+                        logger.error(f"[{task_id[:8]}] Chunk {chunk_idx} FAILED: {chunk_err}")
+                        raise
 
                 # Brief pause between batches
-                await asyncio.sleep(0.5)
+                pause = Config().GRAPH_BUILD_BATCH_PAUSE
+                if pause > 0:
+                    await asyncio.sleep(pause)
 
             # 5. Get graph info
             self.task_manager.update_task(
@@ -185,6 +205,7 @@ class GraphBuilderService:
         except Exception as e:
             import traceback
             error_msg = f"{str(e)}\n{traceback.format_exc()}"
+            logger.error(f"[{task_id[:8]}] Graph build FAILED: {error_msg}")
             self.task_manager.fail_task(task_id, error_msg)
 
     def create_graph(self, name: str) -> str:
@@ -295,7 +316,7 @@ class GraphBuilderService:
                 edge_type_map=self._edge_type_map if self._edge_type_map else None,
             ))
 
-            time.sleep(0.5)
+            time.sleep(Config().GRAPH_BUILD_BATCH_PAUSE)
 
         return []  # No episode UUIDs to poll — processing is synchronous
 

@@ -68,6 +68,10 @@ class TacticalActionType(str, Enum):
     RECOMMEND = "recommend"
     TASK_ORGANIZE = "task_organize"
 
+    # SME interactions
+    CONSULT_SME = "consult_sme"
+    SME_TESTIMONY = "sme_testimony"
+
 
 # ============================================================================
 # T3.2 — MDMP Phase Configuration
@@ -84,6 +88,7 @@ MDMP_PHASES = [
         "valid_actions": [
             "analyze_terrain", "assess_threat", "assess_logistics", "assess_comms",
             "identify_key_terrain", "request_intel", "identify_gap", "concur", "dissent",
+            "consult_sme",
         ],
         "completion_criteria": "Mission restated, specified/implied tasks identified, constraints listed, initial commander's guidance issued.",
     },
@@ -97,6 +102,7 @@ MDMP_PHASES = [
         "valid_actions": [
             "assess_threat", "analyze_terrain", "identify_key_terrain",
             "request_intel", "provide_intel", "identify_gap", "wargame_counter",
+            "consult_sme",
         ],
         "completion_criteria": "Threat assessment complete, at least one enemy COA developed, terrain analysis done.",
     },
@@ -110,6 +116,7 @@ MDMP_PHASES = [
         "valid_actions": [
             "propose_coa", "refine_coa", "assess_logistics", "evaluate_risk",
             "request_intel", "dissent", "recommend", "task_organize",
+            "consult_sme",
         ],
         "completion_criteria": "2-4 distinct COAs developed, each with scheme of maneuver and force allocation.",
     },
@@ -123,6 +130,7 @@ MDMP_PHASES = [
         "valid_actions": [
             "wargame_move", "wargame_counter", "evaluate_risk",
             "challenge_assumption", "request_intel", "identify_gap",
+            "consult_sme",
         ],
         "completion_criteria": "Each COA wargamed against at least one enemy COA, decision points identified, risks catalogued.",
     },
@@ -135,6 +143,7 @@ MDMP_PHASES = [
         "primary_role": "XO",
         "valid_actions": [
             "score_coa", "evaluate_risk", "concur", "dissent", "recommend",
+            "consult_sme",
         ],
         "completion_criteria": "All COAs scored against all criteria, comparison matrix complete, ranking established.",
     },
@@ -231,7 +240,11 @@ class TacticalDeliberationEngine:
         output_dir: str,
         graph_id: str,
     ):
-        self.agents = {a["role_code"]: a for a in agents}
+        # Separate staff officers from SME agents
+        self.staff_agents = {a["role_code"]: a for a in agents if not a.get("is_sme")}
+        self.sme_agents = {a["role_code"]: a for a in agents if a.get("is_sme")}
+        # Combined lookup (backwards compatible)
+        self.agents = {**self.staff_agents, **self.sme_agents}
         self.config = config
         self.output_dir = output_dir
         self.graph_id = graph_id
@@ -262,8 +275,14 @@ class TacticalDeliberationEngine:
         self.state_file = os.path.join(output_dir, "run_state.json")
         self.actions_file = os.path.join(output_dir, "deliberation", "actions.jsonl")
 
-        # Semaphore for concurrent LLM calls
-        self.semaphore = asyncio.Semaphore(5)
+        # Concurrency settings
+        cfg_obj = Config()
+        self.semaphore = asyncio.Semaphore(cfg_obj.LLM_MAX_CONCURRENT)
+        self.parallel_agents = cfg_obj.DELIBERATION_PARALLEL_AGENTS
+
+        # SME settings
+        self.sme_enabled = cfg_obj.SME_AGENT_ENABLED and len(self.sme_agents) > 0
+        self.sme_volunteer_probability = cfg_obj.SME_VOLUNTEER_PROBABILITY
 
         # Graceful shutdown
         self._shutdown = False
@@ -305,67 +324,75 @@ class TacticalDeliberationEngine:
                 self.current_round = round_num + 1
                 logger.info(f"  Round {self.current_round}/{max_rounds}")
 
-                # Primary role goes first, then others
+                # Primary role goes first, then others (staff only)
                 primary = phase.get("primary_role", active_roles[0])
-                ordered_roles = [primary] + [r for r in active_roles if r != primary]
+                other_roles = [r for r in active_roles if r != primary and r in self.staff_agents]
 
-                for role_code in ordered_roles:
-                    if self._shutdown:
-                        break
-                    if role_code not in self.agents:
-                        continue
+                if self._shutdown:
+                    break
 
-                    agent = self.agents[role_code]
+                # ── Step 1: Primary agent acts first (always sequential) ──
+                if primary in self.agents:
+                    primary_agent = self.agents[primary]
+                    primary_ctx = self._build_agent_context(
+                        primary_agent, phase, round_num, phase_log
+                    )
+                    primary_action = await self._agent_act(primary_agent, primary_ctx, valid_actions)
+                    await self._process_action(primary_action, primary, phase_name, phase_log)
 
-                    # T3.4 — Build context
-                    context = self._build_agent_context(
-                        agent, phase, round_num, phase_log
+                # ── Step 2: Remaining agents ──
+                if self._shutdown:
+                    break
+
+                if self.parallel_agents and len(other_roles) > 1:
+                    # Parallel mode: all remaining agents act on a frozen snapshot
+                    frozen_log = list(phase_log)
+
+                    async def _act_one(rc: str):
+                        ag = self.agents[rc]
+                        ctx = self._build_agent_context(ag, phase, round_num, frozen_log)
+                        return await self._agent_act(ag, ctx, valid_actions)
+
+                    results = await asyncio.gather(
+                        *[_act_one(rc) for rc in other_roles],
+                        return_exceptions=True,
                     )
 
-                    # T3.5 — Agent acts
-                    action = await self._agent_act(agent, context, valid_actions)
-
-                    # T3.6 — If REQUEST_INTEL, query graph
-                    if action.action_type == "request_intel":
-                        intel = await self._query_graph(action.content)
-                        action.intel_response = intel
-
-                        # Add intel as a visible entry so others can see it
-                        intel_action = TacticalAction(
-                            phase=self.current_phase,
-                            phase_name=phase_name,
-                            round=self.current_round,
-                            timestamp=datetime.now().isoformat(),
-                            agent_id=agent["agent_id"],
-                            agent_role=role_code,
-                            agent_name=agent.get("name", role_code),
-                            action_type="provide_intel",
-                            content=f"[Graph Query: {action.content}]\n\nResults:\n{intel}",
-                            references=action.references,
-                            confidence=0.9,
-                            risk_assessment="low",
+                    # Process results in deterministic order
+                    for rc, result in zip(other_roles, results):
+                        if isinstance(result, Exception):
+                            logger.error(f"Parallel agent {rc} failed: {result}")
+                            fallback = TacticalAction(
+                                phase=self.current_phase,
+                                phase_name=phase_name,
+                                round=self.current_round,
+                                timestamp=datetime.now().isoformat(),
+                                agent_id=self.agents[rc]["agent_id"],
+                                agent_role=rc,
+                                agent_name=self.agents[rc].get("name", rc),
+                                action_type=valid_actions[0] if valid_actions else "recommend",
+                                content=f"[Error: agent failed — {str(result)[:100]}]",
+                                confidence=0.3,
+                                risk_assessment="medium",
+                            )
+                            await self._process_action(fallback, rc, phase_name, phase_log)
+                        else:
+                            await self._process_action(result, rc, phase_name, phase_log)
+                else:
+                    # Sequential mode (original behavior)
+                    for role_code in other_roles:
+                        if self._shutdown:
+                            break
+                        agent = self.agents[role_code]
+                        context = self._build_agent_context(
+                            agent, phase, round_num, phase_log
                         )
-                        phase_log.append(intel_action)
-                        self.deliberation_log.append(intel_action)
-                        self._log_action(intel_action)
+                        action = await self._agent_act(agent, context, valid_actions)
+                        await self._process_action(action, role_code, phase_name, phase_log)
 
-                    # Track COA proposals
-                    if action.action_type == "propose_coa":
-                        coa = COAProposal(
-                            coa_id=len(self.coas) + 1,
-                            coa_name=f"COA-{len(self.coas) + 1}",
-                            description=action.content[:500],
-                            proposed_by=role_code,
-                        )
-                        self.coas.append(coa)
-
-                    # Track COA decision
-                    if action.action_type == "decide_coa":
-                        self.selected_coa = self._extract_coa_selection(action.content)
-
-                    phase_log.append(action)
-                    self.deliberation_log.append(action)
-                    self._log_action(action)
+                # ── Step 3: SME participation (if enabled, phases 1-5 only) ──
+                if self.sme_enabled and self.current_phase <= 5 and not self._shutdown:
+                    await self._process_sme_round(phase, phase_log)
 
                 # T3.7 — Check phase completion
                 if await self._check_phase_completion(phase, phase_log):
@@ -380,6 +407,17 @@ class TacticalDeliberationEngine:
             if phase["phase_id"] == 5:
                 self._build_comparison_matrix(phase_log)
 
+            # T3.10 — Extract COA decision after Phase 6
+            if phase["phase_id"] == 6 and self.selected_coa is not None:
+                self._save_coa_decision()
+
+        # ── Phase 8: Social Impact Assessment (optional) ──
+        cfg_obj = Config()
+        if (cfg_obj.OASIS_FEEDBACK_ENABLED
+                and cfg_obj.OASIS_FEEDBACK_RUN_PHASE_8
+                and not self._shutdown):
+            await self._run_phase_8()
+
         # Done
         self._update_state(
             "completed",
@@ -392,6 +430,284 @@ class TacticalDeliberationEngine:
 
         # Save final results
         self._save_results()
+
+    # ========================================================================
+    # T3.3b — Process a single agent action (shared by sequential & parallel)
+    # ========================================================================
+
+    async def _process_action(
+        self,
+        action: 'TacticalAction',
+        role_code: str,
+        phase_name: str,
+        phase_log: List['TacticalAction'],
+    ):
+        """Append action to logs and handle intel/COA/decision side-effects."""
+        # Intel request → query graph
+        if action.action_type == "request_intel":
+            intel = await self._query_graph(action.content)
+            action.intel_response = intel
+
+            intel_action = TacticalAction(
+                phase=self.current_phase,
+                phase_name=phase_name,
+                round=self.current_round,
+                timestamp=datetime.now().isoformat(),
+                agent_id=action.agent_id,
+                agent_role=role_code,
+                agent_name=action.agent_name,
+                action_type="provide_intel",
+                content=f"[Graph Query: {action.content}]\n\nResults:\n{intel}",
+                references=action.references,
+                confidence=0.9,
+                risk_assessment="low",
+            )
+            phase_log.append(intel_action)
+            self.deliberation_log.append(intel_action)
+            self._log_action(intel_action)
+
+        # Track COA proposals
+        if action.action_type == "propose_coa":
+            coa = COAProposal(
+                coa_id=len(self.coas) + 1,
+                coa_name=f"COA-{len(self.coas) + 1}",
+                description=action.content[:500],
+                proposed_by=role_code,
+            )
+            self.coas.append(coa)
+
+        # Track COA decision
+        if action.action_type == "decide_coa":
+            self.selected_coa = self._extract_coa_selection(action.content)
+
+        phase_log.append(action)
+        self.deliberation_log.append(action)
+        self._log_action(action)
+
+    # ========================================================================
+    # T3.3c — SME Round Processing
+    # ========================================================================
+
+    async def _process_sme_round(
+        self,
+        phase: dict,
+        phase_log: List['TacticalAction'],
+    ):
+        """Process SME participation after staff round.
+
+        1. If any officer used consult_sme → match best SME and respond.
+        2. Otherwise → 1-2 SMEs may volunteer testimony (probabilistic).
+        """
+        phase_id = phase["phase_id"]
+
+        # Find relevant SMEs for this phase
+        phase_smes = {
+            rc: a for rc, a in self.sme_agents.items()
+            if phase_id in a.get("relevant_phases", [])
+        }
+        if not phase_smes:
+            return
+
+        # Check for consult_sme actions from this round
+        consult_actions = [
+            a for a in phase_log
+            if a.action_type == "consult_sme" and a.round == self.current_round
+        ]
+
+        if consult_actions:
+            # Respond to each consultation
+            for consult in consult_actions:
+                best_sme = self._match_sme_to_question(consult.content, phase_smes)
+                if best_sme:
+                    sme_agent = phase_smes[best_sme]
+                    ctx = self._build_sme_context(sme_agent, phase, phase_log, consult.content)
+                    action = await self._sme_act(sme_agent, ctx)
+                    await self._process_action(action, best_sme, phase["phase_name"], phase_log)
+                    logger.info(f"  SME {best_sme} responded to consultation from {consult.agent_role}")
+        else:
+            # Voluntary testimony — probabilistic
+            sme_list = list(phase_smes.items())
+            random.shuffle(sme_list)
+            volunteers = 0
+            max_volunteers = min(2, len(sme_list))
+
+            for rc, sme_agent in sme_list:
+                if volunteers >= max_volunteers:
+                    break
+                if random.random() < self.sme_volunteer_probability:
+                    ctx = self._build_sme_context(sme_agent, phase, phase_log)
+                    action = await self._sme_act(sme_agent, ctx)
+                    await self._process_action(action, rc, phase["phase_name"], phase_log)
+                    volunteers += 1
+                    logger.info(f"  SME {rc} volunteered testimony")
+
+    def _match_sme_to_question(
+        self,
+        question: str,
+        phase_smes: Dict[str, dict],
+    ) -> Optional[str]:
+        """Match an officer's consult_sme question to the best SME by expertise_tags."""
+        question_lower = question.lower()
+        best_rc = None
+        best_score = 0
+
+        for rc, sme in phase_smes.items():
+            score = 0
+            tags = sme.get("expertise_tags", [])
+            for tag in tags:
+                # Check if any word from the tag appears in the question
+                for word in tag.split("_"):
+                    if len(word) >= 4 and word in question_lower:
+                        score += 1
+            # Also match on entity name
+            name = sme.get("name", "").lower()
+            if name and name in question_lower:
+                score += 3
+            # Match on role_name
+            role = sme.get("role_name", "").lower()
+            for word in role.split():
+                if len(word) >= 4 and word in question_lower:
+                    score += 1
+
+            if score > best_score:
+                best_score = score
+                best_rc = rc
+
+        # If no keyword match, just pick the highest credibility SME
+        if best_rc is None and phase_smes:
+            best_rc = max(phase_smes, key=lambda rc: phase_smes[rc].get("credibility", 0.5))
+
+        return best_rc
+
+    def _build_sme_context(
+        self,
+        sme_agent: dict,
+        phase: dict,
+        phase_log: List['TacticalAction'],
+        consultation_question: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """Build prompt context for an SME's turn — non-doctrinal, personal testimony."""
+        system = f"""You are {sme_agent.get('name', 'a local expert')}, {sme_agent.get('role_name', 'Subject Matter Expert')}.
+
+{sme_agent.get('persona', '')}
+
+CRITICAL RULES:
+- You are NOT a military officer. Do NOT use military jargon, acronyms, or doctrinal frameworks.
+- Speak from personal experience and first-hand knowledge ONLY.
+- You may express emotions: fear, frustration, hope, anger.
+- Be specific about what you have seen, heard, or know from living in the area.
+- If asked about something you don't know, say so honestly.
+- Your credibility rating: {sme_agent.get('credibility', 0.7):.1f}/1.0"""
+
+        user_parts = []
+
+        user_parts.append(f"## CONTEXT: Military staff are in Phase {phase['phase_id']} — {phase['phase_name']}")
+
+        if consultation_question:
+            user_parts.append(f"## QUESTION ASKED BY MILITARY STAFF:\n{consultation_question}")
+        else:
+            user_parts.append("## You have been invited to share relevant testimony with the military staff.")
+
+        # Recent deliberation context (so SME can respond to what's being discussed)
+        if phase_log:
+            recent = phase_log[-10:]
+            history = "\n---\n".join([
+                f"[{a.agent_role}] {a.agent_name}: {a.content[:300]}"
+                for a in recent
+            ])
+            user_parts.append(f"## RECENT DISCUSSION\n{history}")
+
+        user_parts.append("""## INSTRUCTIONS
+Provide your testimony or response. Speak naturally as a local civilian.
+
+Respond with ONLY valid JSON:
+{
+    "action_type": "sme_testimony",
+    "content": "your testimony (200-500 words, personal and specific)",
+    "references": [],
+    "confidence": 0.0-1.0,
+    "risk_assessment": "low|medium|high|critical",
+    "addressed_to": "ALL or a specific role code"
+}""")
+
+        return {
+            "system": system,
+            "user": "\n\n".join(user_parts),
+        }
+
+    async def _sme_act(
+        self,
+        sme_agent: dict,
+        context: Dict[str, str],
+    ) -> 'TacticalAction':
+        """Call LLM for an SME's testimony."""
+        role_code = sme_agent["role_code"]
+        valid_actions = ["sme_testimony"]
+
+        async with self.semaphore:
+            try:
+                response = await self.llm_client.chat.completions.create(
+                    model=self.llm_model,
+                    messages=[
+                        {"role": "system", "content": context["system"]},
+                        {"role": "user", "content": context["user"]},
+                    ],
+                    temperature=0.8,  # Slightly higher for more natural/varied testimony
+                    max_tokens=1500,
+                )
+
+                content = response.choices[0].message.content.strip()
+
+                # Strip markdown fences
+                if content.startswith("```"):
+                    content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+                if content.endswith("```"):
+                    content = content[:-3]
+                if content.startswith("json"):
+                    content = content[4:]
+
+                data = json.loads(content)
+
+            except json.JSONDecodeError:
+                data = {
+                    "action_type": "sme_testimony",
+                    "content": content if 'content' in dir() else "I have information to share.",
+                    "confidence": 0.5,
+                    "risk_assessment": "medium",
+                }
+            except Exception as e:
+                logger.error(f"SME LLM call failed for {role_code}: {e}")
+                data = {
+                    "action_type": "sme_testimony",
+                    "content": f"[Error: SME call failed — {str(e)[:100]}]",
+                    "confidence": 0.3,
+                    "risk_assessment": "medium",
+                }
+
+        try:
+            confidence = max(0.0, min(1.0, float(data.get("confidence", 0.5))))
+        except (TypeError, ValueError):
+            confidence = 0.5
+
+        risk = data.get("risk_assessment", "medium")
+        if risk not in ("low", "medium", "high", "critical"):
+            risk = "medium"
+
+        return TacticalAction(
+            phase=self.current_phase,
+            phase_name=MDMP_PHASES[self.current_phase - 1]["phase_name"] if self.current_phase <= len(MDMP_PHASES) else "Unknown",
+            round=self.current_round,
+            timestamp=datetime.now().isoformat(),
+            agent_id=sme_agent["agent_id"],
+            agent_role=role_code,
+            agent_name=sme_agent.get("name", role_code),
+            action_type="sme_testimony",
+            content=str(data.get("content", ""))[:2000],
+            references=data.get("references", [])[:10],
+            confidence=confidence,
+            risk_assessment=risk,
+            addressed_to=data.get("addressed_to", "ALL"),
+        )
 
     # ========================================================================
     # T3.4 — Build Agent Context (prompt per turn)
@@ -467,6 +783,23 @@ Constraints: {', '.join(self.constraints) if self.constraints else '(None identi
                 history_lines.append(f"{prefix} — {action_label} {conf}:\n{a.content[:400]}")
             history_text = "\n---\n".join(history_lines)
             user_parts.append(f"## DELIBERATION THIS PHASE (Round {round_num + 1})\n{history_text}")
+
+        # SME availability info
+        if self.sme_enabled and phase["phase_id"] <= 5:
+            phase_smes = [
+                a for a in self.sme_agents.values()
+                if phase["phase_id"] in a.get("relevant_phases", [])
+            ]
+            if phase_smes:
+                sme_lines = [
+                    f"- {a.get('name', a['role_code'])} ({a.get('role_name', 'SME')}): {a.get('specialty', 'local expert')}"
+                    for a in phase_smes
+                ]
+                user_parts.append(
+                    "## AVAILABLE SUBJECT MATTER EXPERTS\n"
+                    "You may use 'consult_sme' to request testimony from a local expert:\n"
+                    + "\n".join(sme_lines)
+                )
 
         # Instructions
         valid = ", ".join(phase.get("valid_actions", []))
@@ -855,6 +1188,138 @@ Full deliberation:
         if self.coas:
             return self.coas[0].coa_id
         return None
+
+    # ========================================================================
+    # T3.10 — COA Extraction (after Phase 6)
+    # ========================================================================
+
+    def _save_coa_decision(self):
+        """Save selected COA + phase summaries to coa_decision.json for OASIS feedback."""
+        selected = None
+        for c in self.coas:
+            if c.coa_id == self.selected_coa:
+                selected = c
+                break
+
+        if not selected:
+            return
+
+        decision = {
+            "selected_coa": {
+                "coa_id": selected.coa_id,
+                "coa_name": selected.coa_name,
+                "description": selected.description,
+                "proposed_by": selected.proposed_by,
+                "total_score": selected.total_score,
+            },
+            "commander_intent": self.commander_intent,
+            "mission_statement": self.mission_statement,
+            "phase_summaries": {
+                str(k): {
+                    "phase_name": v.phase_name,
+                    "summary": v.compressed_text[:500],
+                }
+                for k, v in self.phase_summaries.items()
+            },
+            "all_coas": [
+                {"coa_id": c.coa_id, "coa_name": c.coa_name, "total_score": c.total_score}
+                for c in self.coas
+            ],
+            "extracted_at": datetime.now().isoformat(),
+        }
+
+        path = os.path.join(self.output_dir, "deliberation", "coa_decision.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(decision, f, ensure_ascii=False, indent=2)
+        logger.info(f"COA decision saved: COA-{selected.coa_id} ({selected.coa_name})")
+
+    # ========================================================================
+    # T3.11 — Phase 8: Social Impact Assessment
+    # ========================================================================
+
+    async def _run_phase_8(self):
+        """Run Phase 8: Social Impact Assessment based on OASIS feedback summary."""
+        # Check if OASIS feedback summary exists
+        summary_path = os.path.join(self.output_dir, "oasis_feedback", "summary.json")
+        if not os.path.exists(summary_path):
+            logger.info("Phase 8 skipped: no OASIS feedback summary found")
+            return
+
+        with open(summary_path, "r", encoding="utf-8") as f:
+            social_summary = json.load(f)
+
+        logger.info("=== Phase 8: Social Impact Assessment ===")
+        self.current_phase = 8
+
+        phase_8 = {
+            "phase_id": 8,
+            "phase_name": "Social Impact Assessment",
+            "description": "Review social reaction to the selected COA and recommend modifications if needed.",
+            "max_rounds": 2,
+            "active_roles": ["CIMIC", "CDR", "XO", "S2"],
+            "primary_role": "CIMIC",
+            "valid_actions": ["recommend", "evaluate_risk", "concur", "dissent", "identify_gap"],
+            "completion_criteria": "Social impact reviewed, modifications recommended if necessary.",
+        }
+
+        self._update_state(
+            "running", phase=8, phase_name="Social Impact Assessment",
+            message="Phase 8: Social Impact Assessment",
+        )
+
+        # Inject social summary as a phase summary
+        narrative = social_summary.get("narrative_summary", "No summary available")
+        sentiment = social_summary.get("sentiment_distribution", {})
+        concerns = social_summary.get("key_concerns", [])
+
+        social_text = (
+            f"OASIS Social Simulation Results:\n"
+            f"Total posts: {social_summary.get('total_posts', 0)}\n"
+            f"Sentiment: positive={sentiment.get('positive', 0)}%, "
+            f"neutral={sentiment.get('neutral', 0)}%, "
+            f"negative={sentiment.get('negative', 0)}%\n"
+            f"Key concerns: {', '.join(concerns[:5])}\n\n"
+            f"Narrative summary:\n{narrative}"
+        )
+
+        self.phase_summaries[7.5] = PhaseSummary(
+            phase_id=8,
+            phase_name="OASIS Social Feedback",
+            compressed_text=social_text,
+            action_count=social_summary.get("total_posts", 0),
+        )
+
+        phase_log: List[TacticalAction] = []
+
+        for round_num in range(phase_8["max_rounds"]):
+            if self._shutdown:
+                break
+
+            self.current_round = round_num + 1
+            active_roles = phase_8["active_roles"]
+            primary = phase_8["primary_role"]
+            valid_actions = phase_8["valid_actions"]
+
+            # Primary (CIMIC)
+            if primary in self.staff_agents:
+                agent = self.staff_agents[primary]
+                ctx = self._build_agent_context(agent, phase_8, round_num, phase_log)
+                action = await self._agent_act(agent, ctx, valid_actions)
+                await self._process_action(action, primary, phase_8["phase_name"], phase_log)
+
+            # Other roles
+            for rc in active_roles:
+                if rc == primary or rc not in self.staff_agents:
+                    continue
+                agent = self.staff_agents[rc]
+                ctx = self._build_agent_context(agent, phase_8, round_num, phase_log)
+                action = await self._agent_act(agent, ctx, valid_actions)
+                await self._process_action(action, rc, phase_8["phase_name"], phase_log)
+
+        # Summarize Phase 8
+        summary = await self._summarize_phase(phase_8, phase_log)
+        self.phase_summaries[8] = summary
+        logger.info("Phase 8 complete")
 
     # ========================================================================
     # Utility Methods

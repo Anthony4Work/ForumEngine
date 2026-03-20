@@ -13,6 +13,7 @@ from typing import Any
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EntityNode
 from graphiti_core.edges import EntityEdge
+from graphiti_core.errors import GroupsEdgesNotFoundError, GroupsNodesNotFoundError
 
 from .graphiti_client import run_async
 from .logger import get_logger
@@ -74,15 +75,18 @@ def fetch_all_nodes(
             kwargs["uuid_cursor"] = cursor
 
         page_num += 1
-        batch = _with_retry(
-            EntityNode.get_by_group_ids,
-            graphiti.driver,
-            [group_id],
-            max_retries=max_retries,
-            retry_delay=retry_delay,
-            description=f"fetch nodes page {page_num} (group={group_id})",
-            **kwargs,
-        )
+        try:
+            batch = _with_retry(
+                EntityNode.get_by_group_ids,
+                graphiti.driver,
+                [group_id],
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                description=f"fetch nodes page {page_num} (group={group_id})",
+                **kwargs,
+            )
+        except GroupsNodesNotFoundError:
+            break
         if not batch:
             break
 
@@ -120,15 +124,18 @@ def fetch_all_edges(
             kwargs["uuid_cursor"] = cursor
 
         page_num += 1
-        batch = _with_retry(
-            EntityEdge.get_by_group_ids,
-            graphiti.driver,
-            [group_id],
-            max_retries=max_retries,
-            retry_delay=retry_delay,
-            description=f"fetch edges page {page_num} (group={group_id})",
-            **kwargs,
-        )
+        try:
+            batch = _with_retry(
+                EntityEdge.get_by_group_ids,
+                graphiti.driver,
+                [group_id],
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                description=f"fetch edges page {page_num} (group={group_id})",
+                **kwargs,
+            )
+        except GroupsEdgesNotFoundError:
+            break
         if not batch:
             break
 

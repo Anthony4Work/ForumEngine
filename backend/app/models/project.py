@@ -47,8 +47,8 @@ class Project:
     # 配置
     simulation_requirement: Optional[str] = None
     domain_hints: Optional[str] = None
-    chunk_size: int = 500
-    chunk_overlap: int = 50
+    chunk_size: int = 0   # 0 = use Config.DEFAULT_CHUNK_SIZE at runtime
+    chunk_overlap: int = 0  # 0 = use Config.DEFAULT_CHUNK_OVERLAP at runtime
 
     # Graph library metadata
     graph_name: Optional[str] = None
@@ -113,8 +113,8 @@ class Project:
             graph_build_task_id=data.get('graph_build_task_id'),
             simulation_requirement=data.get('simulation_requirement'),
             domain_hints=data.get('domain_hints'),
-            chunk_size=data.get('chunk_size', 500),
-            chunk_overlap=data.get('chunk_overlap', 50),
+            chunk_size=data.get('chunk_size', 0),
+            chunk_overlap=data.get('chunk_overlap', 0),
             graph_name=data.get('graph_name'),
             graph_description=data.get('graph_description'),
             graph_tags=data.get('graph_tags', []),

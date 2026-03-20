@@ -135,12 +135,12 @@ class GraphMemoryUpdater:
         'reddit': 'World 2',
     }
 
-    # 发送间隔（秒），避免请求过快
+    # Send interval (seconds) to avoid excessive request rates
     SEND_INTERVAL = 0.5
 
-    # 重试配置
+    # Retry configuration
     MAX_RETRIES = 3
-    RETRY_DELAY = 2  # 秒
+    RETRY_DELAY = 2  # seconds
 
     def __init__(
         self,
@@ -150,10 +150,10 @@ class GraphMemoryUpdater:
         edge_type_map: Optional[Dict] = None,
     ):
         """
-        初始化更新器
+        Initialize updater
 
         Args:
-            graph_id: 图谱ID (used as group_id in Graphiti episodes)
+            graph_id: Graph ID (used as group_id in Graphiti episodes)
             entity_types: Optional ontology entity types for add_episode
             edge_types: Optional ontology edge types for add_episode
             edge_type_map: Optional ontology edge type map for add_episode
@@ -175,26 +175,26 @@ class GraphMemoryUpdater:
         }
         self._buffer_lock = threading.Lock()
 
-        # 控制标志
+        # Control flags
         self._running = False
         self._worker_thread: Optional[threading.Thread] = None
 
-        # 统计
-        self._total_activities = 0  # 实际添加到队列的活动数
-        self._total_sent = 0        # 成功发送到图谱的批次数
-        self._total_items_sent = 0  # 成功发送到图谱的活动条数
-        self._failed_count = 0      # 发送失败的批次数
-        self._skipped_count = 0     # 被过滤跳过的活动数（DO_NOTHING）
-        self._batch_count = 0       # 累计批次计数（用于 episode name）
+        # Statistics
+        self._total_activities = 0  # Total activities added to queue
+        self._total_sent = 0        # Successfully sent batch count
+        self._total_items_sent = 0  # Successfully sent activity count
+        self._failed_count = 0      # Failed batch count
+        self._skipped_count = 0     # Filtered/skipped activity count (DO_NOTHING)
+        self._batch_count = 0       # Cumulative batch counter (used for episode name)
 
-        logger.info(f"GraphMemoryUpdater 初始化完成: graph_id={graph_id}, batch_size={self.BATCH_SIZE}")
+        logger.info(f"GraphMemoryUpdater initialized: graph_id={graph_id}, batch_size={self.BATCH_SIZE}")
 
     def _get_platform_display_name(self, platform: str) -> str:
-        """获取平台的显示名称"""
+        """Get display name for platform"""
         return self.PLATFORM_DISPLAY_NAMES.get(platform.lower(), platform)
 
     def start(self):
-        """启动后台工作线程"""
+        """Start background worker thread"""
         if self._running:
             return
 
@@ -205,19 +205,19 @@ class GraphMemoryUpdater:
             name=f"GraphMemoryUpdater-{self.graph_id[:8]}"
         )
         self._worker_thread.start()
-        logger.info(f"GraphMemoryUpdater 已启动: graph_id={self.graph_id}")
+        logger.info(f"GraphMemoryUpdater started: graph_id={self.graph_id}")
 
     def stop(self):
-        """停止后台工作线程"""
+        """Stop background worker thread"""
         self._running = False
 
-        # 发送剩余的活动
+        # Send remaining activities
         self._flush_remaining()
 
         if self._worker_thread and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=10)
 
-        logger.info(f"GraphMemoryUpdater 已停止: graph_id={self.graph_id}, "
+        logger.info(f"GraphMemoryUpdater stopped: graph_id={self.graph_id}, "
                    f"total_activities={self._total_activities}, "
                    f"batches_sent={self._total_sent}, "
                    f"items_sent={self._total_items_sent}, "
@@ -226,33 +226,33 @@ class GraphMemoryUpdater:
 
     def add_activity(self, activity: AgentActivity):
         """
-        添加一个agent活动到队列
+        Add an agent activity to the queue
 
-        所有有意义的行为都会被添加到队列，包括：
-        - CREATE_POST（发帖）
-        - CREATE_COMMENT（评论）
-        - QUOTE_POST（引用帖子）
-        - SEARCH_POSTS（搜索帖子）
-        - SEARCH_USER（搜索用户）
-        - LIKE_POST/DISLIKE_POST（点赞/踩帖子）
-        - REPOST（转发）
-        - FOLLOW（关注）
-        - MUTE（屏蔽）
-        - LIKE_COMMENT/DISLIKE_COMMENT（点赞/踩评论）
+        All meaningful actions are added to the queue, including:
+        - CREATE_POST
+        - CREATE_COMMENT
+        - QUOTE_POST
+        - SEARCH_POSTS
+        - SEARCH_USER
+        - LIKE_POST/DISLIKE_POST
+        - REPOST
+        - FOLLOW
+        - MUTE
+        - LIKE_COMMENT/DISLIKE_COMMENT
 
-        action_args中会包含完整的上下文信息（如帖子原文、用户名等）。
+        action_args contains full context information (e.g., post content, username, etc.).
 
         Args:
-            activity: Agent活动记录
+            activity: Agent activity record
         """
-        # 跳过DO_NOTHING类型的活动
+        # Skip DO_NOTHING type activities
         if activity.action_type == "DO_NOTHING":
             self._skipped_count += 1
             return
 
         self._activity_queue.put(activity)
         self._total_activities += 1
-        logger.debug(f"添加活动到图谱队列: {activity.agent_name} - {activity.action_type}")
+        logger.debug(f"Added activity to graph queue: {activity.agent_name} - {activity.action_type}")
 
     def add_activity_from_dict(self, data: Dict[str, Any], platform: str = "deliberation"):
         """
@@ -295,54 +295,54 @@ class GraphMemoryUpdater:
         self.add_activity(activity)
 
     def _worker_loop(self):
-        """后台工作循环 - 按平台批量发送活动到图谱"""
+        """Background worker loop - batch sends activities to graph by platform"""
         while self._running or not self._activity_queue.empty():
             try:
-                # 尝试从队列获取活动（超时1秒）
+                # Try to get activity from queue (1-second timeout)
                 try:
                     activity = self._activity_queue.get(timeout=1)
 
-                    # 将活动添加到对应平台的缓冲区
+                    # Add activity to the corresponding platform buffer
                     platform = activity.platform.lower()
                     with self._buffer_lock:
                         if platform not in self._platform_buffers:
                             self._platform_buffers[platform] = []
                         self._platform_buffers[platform].append(activity)
 
-                        # 检查该平台是否达到批量大小
+                        # Check if this platform has reached batch size
                         if len(self._platform_buffers[platform]) >= self.BATCH_SIZE:
                             batch = self._platform_buffers[platform][:self.BATCH_SIZE]
                             self._platform_buffers[platform] = self._platform_buffers[platform][self.BATCH_SIZE:]
-                            # 释放锁后再发送
+                            # Release lock before sending
                             self._send_batch_activities(batch, platform)
-                            # 发送间隔，避免请求过快
+                            # Send interval to avoid excessive request rates
                             time.sleep(self.SEND_INTERVAL)
 
                 except Empty:
                     pass
 
             except Exception as e:
-                logger.error(f"工作循环异常: {e}")
+                logger.error(f"Worker loop exception: {e}")
                 time.sleep(1)
 
     def _send_batch_activities(self, activities: List[AgentActivity], platform: str):
         """
-        批量发送活动到图谱（合并为一条文本）
+        Batch send activities to the graph (merged into a single text)
 
         Args:
-            activities: Agent活动列表
-            platform: 平台名称
+            activities: List of agent activities
+            platform: Platform name
         """
         if not activities:
             return
 
-        # 将多条活动合并为一条文本，用换行分隔
+        # Merge multiple activities into a single text, separated by newlines
         episode_texts = [activity.to_episode_text() for activity in activities]
         combined_text = "\n".join(episode_texts)
 
         self._batch_count += 1
 
-        # 带重试的发送
+        # Send with retry
         for attempt in range(self.MAX_RETRIES):
             try:
                 run_async(self.graphiti.add_episode(
@@ -360,21 +360,21 @@ class GraphMemoryUpdater:
                 self._total_sent += 1
                 self._total_items_sent += len(activities)
                 display_name = self._get_platform_display_name(platform)
-                logger.info(f"成功批量发送 {len(activities)} 条{display_name}活动到图谱 {self.graph_id}")
-                logger.debug(f"批量内容预览: {combined_text[:200]}...")
+                logger.info(f"Successfully batch-sent {len(activities)} {display_name} activities to graph {self.graph_id}")
+                logger.debug(f"Batch content preview: {combined_text[:200]}...")
                 return
 
             except Exception as e:
                 if attempt < self.MAX_RETRIES - 1:
-                    logger.warning(f"批量发送到图谱失败 (尝试 {attempt + 1}/{self.MAX_RETRIES}): {e}")
+                    logger.warning(f"Batch send to graph failed (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}")
                     time.sleep(self.RETRY_DELAY * (attempt + 1))
                 else:
-                    logger.error(f"批量发送到图谱失败，已重试{self.MAX_RETRIES}次: {e}")
+                    logger.error(f"Batch send to graph failed after {self.MAX_RETRIES} retries: {e}")
                     self._failed_count += 1
 
     def _flush_remaining(self):
-        """发送队列和缓冲区中剩余的活动"""
-        # 首先处理队列中剩余的活动，添加到缓冲区
+        """Send remaining activities in the queue and buffers"""
+        # First process remaining activities in the queue, adding them to buffers
         while not self._activity_queue.empty():
             try:
                 activity = self._activity_queue.get_nowait()
@@ -386,41 +386,41 @@ class GraphMemoryUpdater:
             except Empty:
                 break
 
-        # 然后发送各平台缓冲区中剩余的活动（即使不足BATCH_SIZE条）
+        # Then send remaining activities in each platform buffer (even if below BATCH_SIZE)
         with self._buffer_lock:
             for platform, buffer in self._platform_buffers.items():
                 if buffer:
                     display_name = self._get_platform_display_name(platform)
-                    logger.info(f"发送{display_name}平台剩余的 {len(buffer)} 条活动")
+                    logger.info(f"Sending remaining {len(buffer)} activities for {display_name} platform")
                     self._send_batch_activities(buffer, platform)
-            # 清空所有缓冲区
+            # Clear all buffers
             for platform in self._platform_buffers:
                 self._platform_buffers[platform] = []
 
     def get_stats(self) -> Dict[str, Any]:
-        """获取统计信息"""
+        """Get statistics"""
         with self._buffer_lock:
             buffer_sizes = {p: len(b) for p, b in self._platform_buffers.items()}
 
         return {
             "graph_id": self.graph_id,
             "batch_size": self.BATCH_SIZE,
-            "total_activities": self._total_activities,  # 添加到队列的活动总数
-            "batches_sent": self._total_sent,            # 成功发送的批次数
-            "items_sent": self._total_items_sent,        # 成功发送的活动条数
-            "failed_count": self._failed_count,          # 发送失败的批次数
-            "skipped_count": self._skipped_count,        # 被过滤跳过的活动数（DO_NOTHING）
+            "total_activities": self._total_activities,  # Total activities added to queue
+            "batches_sent": self._total_sent,            # Successfully sent batch count
+            "items_sent": self._total_items_sent,        # Successfully sent activity count
+            "failed_count": self._failed_count,          # Failed batch count
+            "skipped_count": self._skipped_count,        # Filtered/skipped activity count (DO_NOTHING)
             "queue_size": self._activity_queue.qsize(),
-            "buffer_sizes": buffer_sizes,                # 各平台缓冲区大小
+            "buffer_sizes": buffer_sizes,                # Per-platform buffer sizes
             "running": self._running,
         }
 
 
 class GraphMemoryManager:
     """
-    管理多个模拟的图谱记忆更新器
+    Manages graph memory updaters for multiple simulations
 
-    每个模拟可以有自己的更新器实例
+    Each simulation can have its own updater instance
     """
 
     _updaters: Dict[str, GraphMemoryUpdater] = {}
@@ -429,17 +429,17 @@ class GraphMemoryManager:
     @classmethod
     def create_updater(cls, simulation_id: str, graph_id: str) -> GraphMemoryUpdater:
         """
-        为模拟创建图谱记忆更新器
+        Create a graph memory updater for a simulation
 
         Args:
-            simulation_id: 模拟ID
-            graph_id: 图谱ID
+            simulation_id: Simulation ID
+            graph_id: Graph ID
 
         Returns:
-            GraphMemoryUpdater实例
+            GraphMemoryUpdater instance
         """
         with cls._lock:
-            # 如果已存在，先停止旧的
+            # If one already exists, stop the old one first
             if simulation_id in cls._updaters:
                 cls._updaters[simulation_id].stop()
 
@@ -447,30 +447,30 @@ class GraphMemoryManager:
             updater.start()
             cls._updaters[simulation_id] = updater
 
-            logger.info(f"创建图谱记忆更新器: simulation_id={simulation_id}, graph_id={graph_id}")
+            logger.info(f"Created graph memory updater: simulation_id={simulation_id}, graph_id={graph_id}")
             return updater
 
     @classmethod
     def get_updater(cls, simulation_id: str) -> Optional[GraphMemoryUpdater]:
-        """获取模拟的更新器"""
+        """Get the updater for a simulation"""
         return cls._updaters.get(simulation_id)
 
     @classmethod
     def stop_updater(cls, simulation_id: str):
-        """停止并移除模拟的更新器"""
+        """Stop and remove the updater for a simulation"""
         with cls._lock:
             if simulation_id in cls._updaters:
                 cls._updaters[simulation_id].stop()
                 del cls._updaters[simulation_id]
-                logger.info(f"已停止图谱记忆更新器: simulation_id={simulation_id}")
+                logger.info(f"Stopped graph memory updater: simulation_id={simulation_id}")
 
-    # 防止 stop_all 重复调用的标志
+    # Flag to prevent duplicate stop_all calls
     _stop_all_done = False
 
     @classmethod
     def stop_all(cls):
-        """停止所有更新器"""
-        # 防止重复调用
+        """Stop all updaters"""
+        # Prevent duplicate calls
         if cls._stop_all_done:
             return
         cls._stop_all_done = True
@@ -481,13 +481,13 @@ class GraphMemoryManager:
                     try:
                         updater.stop()
                     except Exception as e:
-                        logger.error(f"停止更新器失败: simulation_id={simulation_id}, error={e}")
+                        logger.error(f"Failed to stop updater: simulation_id={simulation_id}, error={e}")
                 cls._updaters.clear()
-            logger.info("已停止所有图谱记忆更新器")
+            logger.info("Stopped all graph memory updaters")
 
     @classmethod
     def get_all_stats(cls) -> Dict[str, Dict[str, Any]]:
-        """获取所有更新器的统计信息"""
+        """Get statistics for all updaters"""
         return {
             sim_id: updater.get_stats()
             for sim_id, updater in cls._updaters.items()
