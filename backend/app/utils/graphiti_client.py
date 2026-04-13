@@ -40,7 +40,7 @@ def _ensure_loop() -> asyncio.AbstractEventLoop:
     return _loop
 
 
-def run_async(coro: Coroutine, timeout: float | None = 600) -> Any:
+def run_async(coro: Coroutine, timeout: float | None = 1800) -> Any:
     """Execute an async coroutine on the shared Graphiti event loop.
 
     Safe to call from any thread (main, Flask request, background workers).

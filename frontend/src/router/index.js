@@ -54,6 +54,12 @@ const routes = [
     name: 'Interaction',
     component: InteractionView,
     props: true
+  },
+  {
+    path: '/mission/:simulationId',
+    name: 'MissionDossier',
+    component: () => import('../views/MissionDossierView.vue'),
+    props: true
   }
 ]
 

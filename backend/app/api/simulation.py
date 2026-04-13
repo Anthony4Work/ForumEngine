@@ -1838,6 +1838,44 @@ def get_agent_stats(simulation_id: str):
         }), 500
 
 
+# ============== Deliberation Results ==============
+
+@simulation_bp.route('/<simulation_id>/results', methods=['GET'])
+def get_simulation_results(simulation_id: str):
+    """
+    Get deliberation results (phase summaries, COAs, decisions)
+
+    Returns the contents of deliberation/results.json for a completed simulation.
+    """
+    try:
+        sim_dir = os.path.join(SimulationManager.SIMULATION_DATA_DIR, simulation_id)
+        if not os.path.exists(sim_dir):
+            sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+
+        results_path = os.path.join(sim_dir, "deliberation", "results.json")
+        if not os.path.exists(results_path):
+            return jsonify({
+                "success": False,
+                "error": "No results found for this simulation"
+            }), 404
+
+        with open(results_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        return jsonify({
+            "success": True,
+            "data": data
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to get simulation results: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
 # ============== Database Query Endpoints ==============
 
 @simulation_bp.route('/<simulation_id>/posts', methods=['GET'])

@@ -177,3 +177,11 @@ export const interviewAgents = (data) => {
 export const getSimulationHistory = (limit = 20) => {
   return service.get('/api/simulation/history', { params: { limit } })
 }
+
+/**
+ * Get deliberation results (phase summaries, COAs, decisions)
+ * @param {string} simulationId
+ */
+export const getSimulationResults = (simulationId) => {
+  return service.get(`/api/simulation/${simulationId}/results`)
+}

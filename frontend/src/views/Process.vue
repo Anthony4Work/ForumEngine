@@ -4,7 +4,7 @@
     <nav class="navbar">
       <div class="nav-brand" @click="goHome">
         <img src="/indramind.svg" alt="IndraMind" class="nav-logo" />
-        FORUMENGINE
+        PULSENET
       </div>
       
       <!-- Center step indicator -->

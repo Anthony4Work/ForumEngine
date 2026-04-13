@@ -179,9 +179,9 @@
                 <span class="btn-text">Analysis Report</span>
               </button>
             </div>
-            <!-- Non-replayable hint -->
-            <div class="modal-playback-hint">
-              <span class="hint-text">Step 3 "Run Simulation" and Step 5 "Deep Interaction" must be started during execution and do not support replay</span>
+            <!-- Dossier hint for completed missions -->
+            <div class="modal-playback-hint" v-if="selectedProject && selectedProject.current_round >= selectedProject.total_rounds && selectedProject.report_id">
+              <span class="hint-text">This mission is complete — <a class="dossier-link" @click.prevent="goToDossier">open full Mission Dossier</a> to view all steps including deliberation and interaction</span>
             </div>
           </div>
         </div>
@@ -391,9 +391,14 @@ const truncateFilename = (filename, maxLength) => {
   return truncatedName + ext
 }
 
-// Open project detail modal
+// Navigate to dossier for completed missions, or open modal for others
 const navigateToProject = (simulation) => {
-  selectedProject.value = simulation
+  const isCompleted = simulation.current_round && simulation.total_rounds && simulation.current_round >= simulation.total_rounds && simulation.report_id
+  if (isCompleted) {
+    router.push({ name: 'MissionDossier', params: { simulationId: simulation.simulation_id } })
+  } else {
+    selectedProject.value = simulation
+  }
 }
 
 // Close modal
@@ -429,6 +434,17 @@ const goToReport = () => {
     router.push({
       name: 'Report',
       params: { reportId: selectedProject.value.report_id }
+    })
+    closeModal()
+  }
+}
+
+// Navigate to Mission Dossier (full pipeline view)
+const goToDossier = () => {
+  if (selectedProject.value?.simulation_id) {
+    router.push({
+      name: 'MissionDossier',
+      params: { simulationId: selectedProject.value.simulation_id }
     })
     closeModal()
   }
@@ -1336,5 +1352,16 @@ onUnmounted(() => {
   letter-spacing: 0.3px;
   text-align: center;
   line-height: 1.5;
+}
+
+.dossier-link {
+  color: #FF4500;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dossier-link:hover {
+  color: #ff6a33;
 }
 </style>

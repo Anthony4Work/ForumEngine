@@ -4,7 +4,7 @@
     <nav class="navbar">
       <div class="nav-brand">
         <img src="/indramind.svg" alt="IndraMind" class="nav-logo" />
-        FORUMENGINE
+        PULSENET
       </div>
       <div class="nav-links">
         <span class="nav-link-item" @click="$router.push('/library')">Library</span>
@@ -168,7 +168,7 @@
             Simulate Every Outcome.
           </h2>
           <p class="explain-desc">
-            Feed any briefing document into <span class="highlight-bold">ForumEngine</span> and it will automatically spin up a multi-agent simulation environment. Explore how <span class="highlight-orange">stakeholders react</span>, identify emerging patterns, and stress-test decisions before committing to them in the real world.
+            Feed any briefing document into <span class="highlight-bold">PulseNet</span> and it will automatically spin up a multi-agent simulation environment. Explore how <span class="highlight-orange">stakeholders react</span>, identify emerging patterns, and stress-test decisions before committing to them in the real world.
           </p>
         </div>
 

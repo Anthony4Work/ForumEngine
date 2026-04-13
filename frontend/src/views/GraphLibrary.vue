@@ -4,7 +4,7 @@
     <nav class="navbar">
       <div class="nav-brand" @click="$router.push('/')">
         <img src="/indramind.svg" alt="IndraMind" class="nav-logo" />
-        FORUMENGINE
+        PULSENET
       </div>
       <div class="nav-links">
         <span class="nav-status-text">Knowledge Graph Library</span>

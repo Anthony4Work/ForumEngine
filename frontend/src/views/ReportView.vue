@@ -5,7 +5,7 @@
       <div class="header-left">
         <div class="brand" @click="router.push('/')">
           <img src="/indramind.svg" alt="IndraMind" class="brand-logo" />
-          FORUMENGINE
+          PULSENET
         </div>
       </div>
       

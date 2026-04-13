@@ -1,18 +1,18 @@
 <div align="center">
 
-# ForumEngine
+# PulseNet
 
 **Multi-Agent Simulation Engine for Operational Decisions**
 
 Run the scenario before it runs you.
 
-<img src="./frontend/public/screenshot.png" alt="ForumEngine Landing" width="80%"/>
+<img src="./frontend/public/screenshot.png" alt="PulseNet Landing" width="80%"/>
 
 </div>
 
 ## Overview
 
-**ForumEngine** is a multi-agent simulation engine designed for mission planning and operational decision-making. Feed any briefing document — policy drafts, incident reports, strategic proposals — and ForumEngine will automatically spin up a high-fidelity simulation environment where autonomous agents with independent personalities, long-term memory, and behavioral logic interact freely.
+**PulseNet** is a multi-agent simulation engine designed for mission planning and operational decision-making. Feed any briefing document — policy drafts, incident reports, strategic proposals — and PulseNet will automatically spin up a high-fidelity simulation environment where autonomous agents with independent personalities, long-term memory, and behavioral logic interact freely.
 
 Observe how stakeholders react, identify emerging patterns, and stress-test decisions before committing to them in the real world.
 
@@ -22,7 +22,7 @@ Observe how stakeholders react, identify emerging patterns, and stress-test deci
 
 ## How It Works
 
-ForumEngine runs a 5-step pipeline:
+PulseNet runs a 5-step pipeline:
 
 1. **Graph Building** — Extracts entities and relationships from seed documents, injects individual and group memory into a knowledge graph (GraphRAG)
 2. **Environment Setup** — Generates agent profiles, extracts entity relationships, and configures simulation parameters
@@ -113,4 +113,4 @@ Exposes ports `3000` (frontend) and `5001` (backend). Reads `.env` from the proj
 
 ## Acknowledgements
 
-ForumEngine's simulation engine is powered by **[OASIS](https://github.com/camel-ai/oasis)**.
+PulseNet's simulation engine is powered by **[OASIS](https://github.com/camel-ai/oasis)**.
